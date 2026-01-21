@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>專業複利計算機 | 財商教學專用</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --accent-color: #27ae60;
+            --bg-color: #f4f7f6;
+            --card-bg: #ffffff;
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--primary-color);
+            margin-bottom: 30px;
+            font-size: 1.8rem;
+        }
+
+        /* 模式切換按鈕 */
+        .mode-switch {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 30px;
+            background: #e0e0e0;
+            border-radius: 30px;
+            padding: 5px;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 25px;
+            font-weight: bold;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            color: #666;
+        }
+
+        .mode-btn.active {
+            background: var(--primary-color);
+            color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        /* 輸入區塊樣式 */
+        .input-group {
+            margin-bottom: 25px;
+        }
+
+        .label-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .input-control-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            height: 6px;
+            background: #ddd;
+            border-radius: 5px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: var(--accent-color);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: background .15s ease-in-out;
+        }
+
+        input[type="number"] {
+            width: 100px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            text-align: right;
+            font-size: 1rem;
+        }
+
+        /* 結果顯示區 */
+        .result-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+            text-align: center;
+            border-left: 5px solid var(--accent-color);
+        }
+
+        .result-title {
+            font-size: 1rem;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .result-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: var(--accent-color);
+            margin: 0;
+        }
+
+        .sub-result {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 15px;
+            font-size: 0.9rem;
+            color: #555;
+        }
+
+        /* 圖表區 */
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+            margin-top: 30px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 600px) {
+            .result-value {
+                font-size: 2rem;
+            }
+            .container {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>💰 複利效應計算機</h1>
+
+    <div class="mode-switch">
+        <button class="mode-btn active" onclick="switchMode('forward')">正向：計算未來財富</button>
+        <button class="mode-btn" onclick="switchMode('reverse')">反向：推算每月儲蓄</button>
+    </div>
+
+    <div id="forward-inputs">
+        <div class="input-group">
+            <div class="label-row">
+                <label>投資年期 (年)</label>
+            </div>
+            <div class="input-control-row">
+                <input type="range" id="f-years-range" min="1" max="50" value="20" oninput="syncInputs('f-years', this.value)">
+                <input type="number" id="f-years-num" value="20" oninput="syncInputs('f-years', this.value)">
+            </div>
+        </div>
+
+        <div class="input-group">
+            <div class="label-row">
+                <label>每月投入金額 (元)</label>
+            </div>
+            <div class="input-control-row">
+                <input type="range" id="f-monthly-range" min="1000" max="100000" step="1000" value="5000" oninput="syncInputs('f-monthly', this.value)">
+                <input type="number" id="f-monthly-num" value="5000" oninput="syncInputs('f-monthly', this.value)">
+            </div>
+        </div>
+
+        <div class="input-group">
+            <div class="label-row">
+                <label>預期年化報酬率 (%)</label>
+            </div>
+            <div class="input-control-row">
+                <input type="range" id="f-rate-range" min="1" max="20" step="0.1" value="6" oninput="syncInputs('f-rate', this.value)">
+                <input type="number" id="f-rate-num" value="6" step="0.1" oninput="syncInputs('f-rate', this.value)">
+            </div>
+        </div>
+    </div>
+
+    <div id="reverse-inputs" class="hidden">
+        <div class="input-group">
+            <div class="label-row">
+                <label>目標滿期金額 (元)</label>
+            </div>
+            <div class="input-control-row">
+                <input type="range" id="r-target-range" min="100000" max="20000000" step="100000" value="3000000" oninput="syncInputs('r-target', this.value)">
+                <input type="number" id="r-target-num" value="3000000" step="10000" oninput="syncInputs('r-target', this.value)">
+            </div>
+        </div>
+
+        <div class="input-group">
+            <div class="label-row">
+                <label>準備年期 (年)</label>
+            </div>
+            <div class="input-control-row">
+                <input type="range" id="r-years-range" min="1" max="50" value="20" oninput="syncInputs('r-years', this.value)">
+                <input type="number" id="r-years-num" value="20" oninput="syncInputs('r-years', this.value)">
+            </div>
+        </div>
+
+        <div class="input-group">
+            <div class="label-row">
+                <label>預期年化報酬率 (%)</label>
+            </div>
+            <div class="input-control-row">
+                <input type="range" id="r-rate-range" min="1" max="20" step="0.1" value="6" oninput="syncInputs('r-rate', this.value)">
+                <input type="number" id="r-rate-num" value="6" step="0.1" oninput="syncInputs('r-rate', this.value)">
+            </div>
+        </div>
+    </div>
+
+    <div class="result-section">
+        <div class="result-title" id="main-result-label">預估累積總金額</div>
+        <div class="result-value" id="main-result-value">$0</div>
+        
+        <div class="sub-result">
+            <div>
+                <span>總投入本金: </span>
+                <strong id="total-principal" style="color: #36a2eb;">$0</strong>
+            </div>
+            <div>
+                <span>複利孳息: </span>
+                <strong id="total-interest" style="color: #ff6384;">$0</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="myChart"></canvas>
+    </div>
+</div>
+
+<script>
+    let currentMode = 'forward'; // 'forward' or 'reverse'
+    let myChart = null;
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', () => {
+        calculate();
+    });
+
+    // 模式切換邏輯
+    function switchMode(mode) {
+        currentMode = mode;
+        const btns = document.querySelectorAll('.mode-btn');
+        const forwardDiv = document.getElementById('forward-inputs');
+        const reverseDiv = document.getElementById('reverse-inputs');
+        const resultLabel = document.getElementById('main-result-label');
+
+        if (mode === 'forward') {
+            btns[0].classList.add('active');
+            btns[1].classList.remove('active');
+            forwardDiv.classList.remove('hidden');
+            reverseDiv.classList.add('hidden');
+            resultLabel.innerText = "預估累積總金額";
+        } else {
+            btns[0].classList.remove('active');
+            btns[1].classList.add('active');
+            forwardDiv.classList.add('hidden');
+            reverseDiv.classList.remove('hidden');
+            resultLabel.innerText = "每月需投入金額";
+        }
+        calculate();
+    }
+
+    // 同步滑桿與輸入框
+    function syncInputs(idPrefix, value) {
+        document.getElementById(`${idPrefix}-range`).value = value;
+        document.getElementById(`${idPrefix}-num`).value = value;
+        calculate();
+    }
+
+    // 格式化貨幣
+    function formatMoney(num) {
+        return new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0 }).format(num);
+    }
+
+    // 核心計算邏輯
+    function calculate() {
+        let years, rate, monthlyInput, targetAmount;
+        let totalPrincipal, totalInterest, finalAmount;
+
+        if (currentMode === 'forward') {
+            // 正向：已知月投、年期、利率 -> 求滿期金
+            years = parseFloat(document.getElementById('f-years-num').value);
+            monthlyInput = parseFloat(document.getElementById('f-monthly-num').value);
+            rate = parseFloat(document.getElementById('f-rate-num').value) / 100;
+
+            const months = years * 12;
+            const monthlyRate = rate / 12;
+
+            // 期初付年金終值公式 (假設月初投入，如果是月底投入公式略有不同，保險通常以月繳計算)
+            // FV = PMT * [((1 + r)^n - 1) / r] * (1+r) (如果月初)
+            // 這裡使用通用的定期定額公式 (期末付，如需期初付可微調)
+            // 簡化計算：FV = P * ((1+r)^n - 1) / r
+            
+            if (rate === 0) {
+                finalAmount = monthlyInput * months;
+            } else {
+                finalAmount = monthlyInput * ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate);
+            }
+
+            totalPrincipal = monthlyInput * months;
+            totalInterest = finalAmount - totalPrincipal;
+
+            // 更新 UI
+            document.getElementById('main-result-value').innerText = formatMoney(finalAmount);
+
+        } else {
+            // 反向：已知目標、年期、利率 -> 求月投
+            targetAmount = parseFloat(document.getElementById('r-target-num').value);
+            years = parseFloat(document.getElementById('r-years-num').value);
+            rate = parseFloat(document.getElementById('r-rate-num').value) / 100;
+
+            const months = years * 12;
+            const monthlyRate = rate / 12;
+
+            if (rate === 0) {
+                monthlyInput = targetAmount / months;
+            } else {
+                monthlyInput = targetAmount * monthlyRate / (Math.pow(1 + monthlyRate, months) - 1);
+            }
+
+            finalAmount = targetAmount;
+            totalPrincipal = monthlyInput * months;
+            totalInterest = finalAmount - totalPrincipal;
+
+            // 更新 UI
+            document.getElementById('main-result-value').innerText = formatMoney(monthlyInput);
+        }
+
+        document.getElementById('total-principal').innerText = formatMoney(totalPrincipal);
+        document.getElementById('total-interest').innerText = formatMoney(totalInterest);
+
+        updateChart(totalPrincipal, totalInterest);
+    }
+
+    // 更新圖表
+    function updateChart(principal, interest) {
+        const ctx = document.getElementById('myChart').getContext('2d');
+        
+        if (myChart) {
+            myChart.destroy();
+        }
+
+        myChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['總投入本金', '複利孳息'],
+                datasets: [{
+                    data: [principal, interest],
+                    backgroundColor: [
+                        '#36a2eb', // 本金顏色 (藍)
+                        '#ff6384'  // 利息顏色 (紅)
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            font: {
+                                size: 14
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                label += formatMoney(context.raw);
+                                return label;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
