@@ -211,7 +211,7 @@
   };
 
   // ---------- 背景 ----------
-  let bgFloor = null, grainTiles = null;
+  let bgFloor = null, grainTiles = null, haloCv = null, chromaCv = null;
   function buildFloor() {
     const c = mk(W, 900), g = c.getContext('2d'), r = rng(5);
     const grd = g.createLinearGradient(0, 0, 0, 900);
@@ -236,7 +236,7 @@
   function background(ctx, t) {
     if (!bgFloor) bgFloor = buildFloor();
     const grd = ctx.createLinearGradient(0, 0, 0, H);
-    grd.addColorStop(0, C.bg0); grd.addColorStop(0.55, C.bg1); grd.addColorStop(1, C.bg0);
+    grd.addColorStop(0, '#030405'); grd.addColorStop(0.3, C.bg0); grd.addColorStop(0.6, C.bg1); grd.addColorStop(1, C.bg0);
     ctx.fillStyle = grd; ctx.fillRect(-200, -200, W + 400, H + 400);
     // 光束
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
@@ -249,6 +249,17 @@
       ctx.restore();
     });
     ctx.restore();
+    // 遠方的巨石剪影（被霧吃掉大半，做出空間尺度）
+    [[60, 0.9, 150, 520], [300, 0.55, 90, 380], [760, 0.7, 120, 460], [980, 1.0, 170, 600]].forEach(([x, a, w, h]) => {
+      const top = T.FLOOR_Y - 60 - h;
+      const gr = ctx.createLinearGradient(0, top, 0, T.FLOOR_Y);
+      gr.addColorStop(0, `rgba(22,28,37,${0.0})`); gr.addColorStop(0.25, `rgba(22,28,37,${0.55 * a})`); gr.addColorStop(1, `rgba(12,15,20,${0.9 * a})`);
+      ctx.fillStyle = gr; ctx.fillRect(x - w / 2, top, w, h + 60);
+    });
+    // 牆後的逆光
+    const back = ctx.createRadialGradient(540, 700, 40, 540, 760, 760);
+    back.addColorStop(0, 'rgba(255,214,170,0.20)'); back.addColorStop(0.45, 'rgba(120,140,170,0.07)'); back.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = back; ctx.fillRect(-200, 0, W + 400, H); ctx.restore();
     // 地面
     ctx.drawImage(bgFloor, 0, T.FLOOR_Y - 20);
     const fg = ctx.createLinearGradient(0, T.FLOOR_Y - 40, 0, T.FLOOR_Y + 160);
@@ -345,16 +356,26 @@
     ctx.rotate(pose.rot || 0);
     ctx.scale(pose.s, pose.s);
     ctx.globalAlpha *= pose.alpha;
-    // 石碑投在牆上／地上的陰影
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(-size / 2 + 10, -size / 2 + 16, size, size);
-    ctx.drawImage(tileImg(ch, verm), -size / 2, -size / 2, size, size);
+    // 石碑投下的柔和陰影（往右下，與石碑圖的光向一致）
+    const sh = shadowSprite();
+    ctx.drawImage(sh, -size * 0.7 + size * 0.07, -size * 0.7 + size * 0.1, size * 1.4, size * 1.4);
+    const im = tileImg(ch, verm);
+    const m = tileImages[tileKey(ch, verm)] ? 1.04 : 1;
+    ctx.drawImage(im, -size * m / 2, -size * m / 2, size * m, size * m);
     if (crack) drawCracks(ctx, seed, size, crack);
     if (dim) { ctx.fillStyle = `rgba(4,6,9,${dim})`; ctx.fillRect(-size / 2, -size / 2, size, size); }
     ctx.restore();
   }
+  let shadowCv = null;
+  function shadowSprite() {
+    if (shadowCv) return shadowCv;
+    const P = 280; shadowCv = mk(P, P); const g = shadowCv.getContext('2d');
+    g.filter = 'blur(18px)'; g.fillStyle = 'rgba(0,0,0,0.75)'; g.fillRect(P * 0.18, P * 0.18, P * 0.64, P * 0.64);
+    return shadowCv;
+  }
   function drawShards(ctx, ch, verm, x, y, size, t0, t, seed, cx0, cy0) {
     const dt = t - t0, list = shards(seed, 9), img = tileImg(ch, verm);
+    const m = tileImages[tileKey(ch, verm)] ? 1.04 : 1;
     for (const sd of list) {
       const dirx = (x + sd.cx * size - cx0), diry = (y + sd.cy * size - cy0);
       const l = Math.hypot(dirx, diry) || 1;
@@ -370,7 +391,7 @@
       ctx.beginPath();
       sd.poly.forEach(([u, v], i) => { const X = (u - sd.cx) * size, Y = (v - sd.cy) * size; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
       ctx.closePath(); ctx.clip();
-      ctx.drawImage(img, (-0.5 - sd.cx) * size, (-0.5 - sd.cy) * size, size, size);
+      ctx.drawImage(img, (-0.5 * m - sd.cx) * size, (-0.5 * m - sd.cy) * size, size * m, size * m);
       ctx.restore();
     }
   }
@@ -409,7 +430,7 @@
   // ---------- 一個瞬間的完整畫面 ----------
   function scene(ctx, t) {
     const sh = shake(t);
-    const zoom = keys(t, CAM.zoom) + sh.zoom;
+    const zoom = keys(t, CAM.zoom) * 1.04 + sh.zoom;
     const cx = keys(t, CAM.cx), cy = keys(t, CAM.cy);
     const rot = keys(t, CAM.rot) * Math.PI / 180 + sh.rot;
     const camera = (par) => {
@@ -522,18 +543,33 @@
     if (flash > 0) { ctx.fillStyle = `rgba(255,248,238,${clamp(flash)})`; ctx.fillRect(0, 0, W, H); }
     ctx.restore();
     if (chroma) {
-      const img = ctx.getImageData(0, 0, W, H), d = img.data, src = new Uint8ClampedArray(d);
+      // 色彩錯位：分出紅、綠、藍三個色版，紅往右、藍往左，再疊回去（不讀像素，本機圖片也能用）
+      if (!chromaCv) chromaCv = [mk(W, H), mk(W, H), mk(W, H)];
       const k = Math.round(chroma);
-      for (let y = 0; y < H; y++) {
-        const row = y * W * 4;
-        for (let x = 0; x < W; x++) {
-          const i = row + x * 4;
-          const xr = Math.min(W - 1, x + k), xb = Math.max(0, x - k);
-          d[i] = src[row + xr * 4]; d[i + 2] = src[row + xb * 4 + 2];
-        }
-      }
-      ctx.putImageData(img, 0, 0);
+      ['#ff0000', '#00ff00', '#0000ff'].forEach((col, i) => {
+        const g = chromaCv[i].getContext('2d');
+        g.globalCompositeOperation = 'source-over'; g.drawImage(ctx.canvas, 0, 0);
+        g.globalCompositeOperation = 'multiply'; g.fillStyle = col; g.fillRect(0, 0, W, H);
+      });
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(chromaCv[0], k, 0); ctx.drawImage(chromaCv[1], 0, 0); ctx.drawImage(chromaCv[2], -k, 0);
+      ctx.restore();
     }
+    // 柔光：亮部往外溢一點
+    if (!haloCv) { haloCv = mk(W / 4, H / 4); }
+    const hg = haloCv.getContext('2d');
+    hg.filter = 'none'; hg.clearRect(0, 0, W / 4, H / 4); hg.drawImage(ctx.canvas, 0, 0, W / 4, H / 4);
+    ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.14; ctx.filter = 'blur(6px) brightness(0.9) contrast(1.6)';
+    ctx.drawImage(haloCv, 0, 0, W, H); ctx.restore();
+    // 調色：暗部偏冷、亮部偏暖
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = 'rgba(40,70,110,0.35)'; ctx.fillRect(0, 0, W, H);
+    const warm = ctx.createRadialGradient(W / 2, H * 0.45, 0, W / 2, H * 0.45, H * 0.55);
+    warm.addColorStop(0, 'rgba(255,190,130,0.28)'); warm.addColorStop(1, 'rgba(255,190,130,0)');
+    ctx.fillStyle = warm; ctx.fillRect(0, 0, W, H);
+    ctx.restore();
     // 暗角
     const v = ctx.createRadialGradient(W / 2, H * 0.47, W * 0.35, W / 2, H / 2, H * 0.72);
     v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.72)');

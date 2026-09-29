@@ -2,22 +2,29 @@
 用 Blender（bpy）算刻字石碑：每個字一張透明背景 PNG，存到 tiles/。
 檔名與 video.html 對應：一般字 <unicode16進位>.png，朱紅描紅 v_<unicode16進位>.png。
 
-用法：python3 tiles.py 思源宋體.ttf [--only 錢] [--samples 48] [--px 640]
-需要：pip install bpy fonttools skia-pathops
+做法：先用字型畫出「高度圖」（石面白、刻痕黑、刻痕邊緣有斜面、石碑邊緣圓角與崩角），
+再在 Blender 用細密網格照高度圖推出真實凹凸，顏色也依高度分成石面與刻痕。
+不用布林運算，中文字再複雜都穩定。
+
+用法：python3 tiles.py 思源宋體.ttf [--only 錢在] [--samples 48] [--px 640]
+需要：pip install bpy fonttools skia-pathops pillow scipy
 """
 import math
 import os
-import random
 import sys
 import time
 
-import bpy
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+from scipy import ndimage
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.removeOverlaps import removeOverlaps
 from fontTools.subset import Subsetter, Options
 from fontTools.varLib import instancer
+import bpy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, 'tiles')
 args = sys.argv[1:]
 FONT_SRC = args[0]
 
@@ -29,6 +36,8 @@ def opt(k, d):
 SAMPLES = int(opt('--samples', 48))
 PX = int(opt('--px', 640))
 ONLY = opt('--only', None)
+N = 1024            # 高度圖解析度
+GRID = 720          # 網格細分數
 
 # 影片用到的字（True＝朱紅描紅）
 TILES = [('你', False), ('以', False), ('為', False), ('在', False), ('賺', False), ('錢', True), ('？', False),
@@ -37,16 +46,20 @@ if ONLY:
     TILES = [t for t in TILES if t[0] in ONLY]
 
 
-# ---------- 1. 做一個粗細 900、去除重疊的小字型檔 ----------
+def key_of(ch, verm):
+    return ('v_' if verm else '') + format(ord(ch), 'x')
+
+
+# ---------- 1. 粗細 900、去除重疊的小字型檔 ----------
 def static_font():
-    out = os.path.join(HERE, 'tiles', '_font_black.ttf')
+    out = os.path.join(OUT, '_font_black.ttf')
     if os.path.exists(out):
         return out
     f = TTFont(FONT_SRC)
     o = Options()
     o.layout_features = []
     s = Subsetter(o)
-    s.populate(text=''.join(c for c, _ in TILES) + '你以為在賺錢？工作睡覺讓去上班')
+    s.populate(text='你以為在賺錢？工作睡覺讓去上班')
     s.subset(f)
     if 'fvar' in f:
         f = instancer.instantiateVariableFont(f, {'wght': 900})
@@ -55,7 +68,60 @@ def static_font():
     return out
 
 
-# ---------- 2. 場景 ----------
+# ---------- 2. 高度圖 ----------
+def smooth_noise(rng, res, size):
+    z = rng.standard_normal((res, res))
+    z = ndimage.zoom(z, size / res, order=3)[:size, :size]
+    return z / (np.abs(z).max() + 1e-9)
+
+
+def heightmap(ch, font_path, seed):
+    rng = np.random.default_rng(seed)
+    img = Image.new('L', (N, N), 0)
+    d = ImageDraw.Draw(img)
+    font = ImageFont.truetype(font_path, int(N * 0.74))
+    bb = d.textbbox((0, 0), ch, font=font)
+    d.text((N / 2 - (bb[0] + bb[2]) / 2, N / 2 - (bb[1] + bb[3]) / 2 + N * 0.01), ch, font=font, fill=255)
+    mask = np.asarray(img) > 127
+
+    # 刻痕：邊緣 14px 的斜面，再往內是平底
+    d_in = ndimage.distance_transform_edt(mask)
+    carve = np.clip(d_in / 14.0, 0, 1)
+    h_glyph = 1 - carve
+
+    # 石碑邊緣：圓角斜面
+    yy, xx = np.mgrid[0:N, 0:N]
+    d_b = np.minimum.reduce([xx, yy, N - 1 - xx, N - 1 - yy]).astype(float)
+    e = np.sin(np.clip(d_b / 34.0, 0, 1) * math.pi / 2)
+    h_edge = 0.3 + 0.7 * e
+
+    # 崩角：沿邊緣隨機咬掉幾塊
+    chip = np.zeros((N, N))
+    wob = smooth_noise(rng, 60, N)
+    for _ in range(8):
+        side = rng.integers(4)
+        u = rng.uniform(0.06, 0.94) * N
+        cx, cy = [(u, 0), (N - 1, u), (u, N - 1), (0, u)][side]
+        r = rng.uniform(12, 40)
+        ang = np.arctan2(yy - cy, xx - cx)
+        jag = 1 + 0.45 * np.sign(np.sin(ang * rng.integers(3, 6) + rng.uniform(0, 6)))   # 不規則碎裂邊
+        dist = np.hypot(xx - cx, yy - cy) / jag + wob * r * 0.9
+        chip = np.maximum(chip, np.clip((r - dist) / 6.0, 0, 1))
+    h_edge = h_edge * (1 - 0.75 * chip)
+
+    # 石面起伏與細顆粒
+    noise = smooth_noise(rng, 40, N) * 0.018 + rng.standard_normal((N, N)) * 0.004
+    h = np.minimum(h_edge, h_glyph) + noise
+    h = np.clip(h, 0, 1)
+    groove = np.clip((0.55 - np.minimum(h_glyph, 1)) / 0.2, 0, 1)   # 刻痕區（給顏色用）
+    return h, groove
+
+
+def save16(a, path):
+    Image.fromarray((np.clip(a, 0, 1) * 65535).astype(np.uint16)).save(path)
+
+
+# ---------- 3. Blender 場景 ----------
 def reset():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     sc = bpy.context.scene
@@ -63,10 +129,6 @@ def reset():
     sc.cycles.device = 'CPU'
     sc.cycles.samples = SAMPLES
     sc.cycles.use_denoising = True
-    try:
-        sc.cycles.denoiser = 'OPENIMAGEDENOISE'
-    except Exception:
-        pass
     sc.cycles.max_bounces = 6
     sc.render.film_transparent = True
     sc.render.resolution_x = sc.render.resolution_y = PX
@@ -77,13 +139,13 @@ def reset():
     world = bpy.data.worlds.new('w')
     world.use_nodes = True
     bg = world.node_tree.nodes['Background']
-    bg.inputs[0].default_value = (0.05, 0.065, 0.09, 1)   # 冷色環境光，很弱
-    bg.inputs[1].default_value = 0.35
+    bg.inputs[0].default_value = (0.05, 0.065, 0.09, 1)   # 很弱的冷色環境光
+    bg.inputs[1].default_value = 0.3
     sc.world = world
     return sc
 
 
-def node(nt, kind, loc, **inputs):
+def nd(nt, kind, loc, **inputs):
     n = nt.nodes.new(kind)
     n.location = loc
     for k, v in inputs.items():
@@ -91,194 +153,161 @@ def node(nt, kind, loc, **inputs):
     return n
 
 
-def stone_material(name, base, dark, seed):
-    """石頭：兩層噪聲的顏色變化＋凹凸；邊緣（Pointiness）磨亮、凹處積灰"""
-    m = bpy.data.materials.new(name)
+def tile_material(h_img, g_img, verm, seed):
+    m = bpy.data.materials.new('tile')
     m.use_nodes = True
     nt = m.node_tree
+    L = nt.links.new
     bsdf = nt.nodes['Principled BSDF']
-    bsdf.inputs['Roughness'].default_value = 0.88
-    tex = node(nt, 'ShaderNodeTexCoord', (-1200, 0))
-    mp = node(nt, 'ShaderNodeMapping', (-1000, 0))
-    mp.inputs['Location'].default_value = (seed * 3.1, seed * 1.7, seed * 0.9)
-    nt.links.new(tex.outputs['Object'], mp.inputs['Vector'])
-    n1 = node(nt, 'ShaderNodeTexNoise', (-800, 150), Scale=6.0, Detail=12.0, Roughness=0.65)
-    n2 = node(nt, 'ShaderNodeTexNoise', (-800, -150), Scale=48.0, Detail=6.0, Roughness=0.7)
-    vor = node(nt, 'ShaderNodeTexVoronoi', (-800, -400), Scale=22.0)
-    for n in (n1, n2, vor):
-        nt.links.new(mp.outputs['Vector'], n.inputs['Vector'])
-    ramp = node(nt, 'ShaderNodeValToRGB', (-550, 150))
-    ramp.color_ramp.elements[0].color = dark
-    ramp.color_ramp.elements[1].color = base
-    ramp.color_ramp.elements[0].position = 0.35
-    ramp.color_ramp.elements[1].position = 0.68
-    nt.links.new(n1.outputs['Fac'], ramp.inputs['Fac'])
-    # 邊緣磨亮／凹處積灰
-    geo = node(nt, 'ShaderNodeNewGeometry', (-800, 400))
-    pr = node(nt, 'ShaderNodeMapRange', (-550, 400))
-    pr.inputs['From Min'].default_value = 0.47
+    uv = nd(nt, 'ShaderNodeTexCoord', (-1400, 0))
+    mp = nd(nt, 'ShaderNodeMapping', (-1200, 0))
+    mp.inputs['Location'].default_value = (seed * 3.1, seed * 1.7, 0)
+    L(uv.outputs['UV'], mp.inputs['Vector'])
+
+    # 石面顏色：兩層噪聲
+    n1 = nd(nt, 'ShaderNodeTexNoise', (-1000, 300), Scale=5.0, Detail=12.0, Roughness=0.62)
+    n2 = nd(nt, 'ShaderNodeTexNoise', (-1000, 50), Scale=38.0, Detail=8.0, Roughness=0.7)
+    L(mp.outputs['Vector'], n1.inputs['Vector'])
+    L(mp.outputs['Vector'], n2.inputs['Vector'])
+    ramp = nd(nt, 'ShaderNodeValToRGB', (-780, 300))
+    ramp.color_ramp.elements[0].color = (0.46, 0.42, 0.36, 1)
+    ramp.color_ramp.elements[1].color = (0.80, 0.74, 0.64, 1)
+    ramp.color_ramp.elements[0].position = 0.34
+    ramp.color_ramp.elements[1].position = 0.7
+    L(n1.outputs['Fac'], ramp.inputs['Fac'])
+    speck = nd(nt, 'ShaderNodeMix', (-560, 300))
+    speck.data_type = 'RGBA'
+    speck.blend_type = 'MULTIPLY'
+    speck.inputs['Factor'].default_value = 0.35
+    L(ramp.outputs['Color'], speck.inputs[6])
+    L(n2.outputs['Color'], speck.inputs[7])
+
+    # 邊緣磨亮（Pointiness）
+    geo = nd(nt, 'ShaderNodeNewGeometry', (-1000, 600))
+    pr = nd(nt, 'ShaderNodeMapRange', (-780, 600))
+    pr.inputs['From Min'].default_value = 0.49
     pr.inputs['From Max'].default_value = 0.56
-    nt.links.new(geo.outputs['Pointiness'], pr.inputs['Value'])
-    mix = node(nt, 'ShaderNodeMix', (-300, 250))
-    mix.data_type = 'RGBA'
-    mix.blend_type = 'MULTIPLY'
-    nt.links.new(pr.outputs['Result'], mix.inputs['Factor'])
-    mix.inputs['Factor'].default_value = 0.5
-    nt.links.new(ramp.outputs['Color'], mix.inputs[6])
-    grime = node(nt, 'ShaderNodeMix', (-450, 500))
-    grime.data_type = 'RGBA'
-    grime.inputs[6].default_value = (0.25, 0.22, 0.19, 1)
-    grime.inputs[7].default_value = (1.05, 1.03, 1.0, 1)
-    nt.links.new(pr.outputs['Result'], grime.inputs['Factor'])
-    nt.links.new(grime.outputs[2], mix.inputs[7])
-    mix.blend_type = 'MULTIPLY'
-    nt.links.new(mix.outputs[2], bsdf.inputs['Base Color'])
-    # 凹凸：大起伏＋細顆粒＋坑洞
-    b1 = node(nt, 'ShaderNodeBump', (-300, -150), Strength=0.35, Distance=0.02)
-    b2 = node(nt, 'ShaderNodeBump', (-100, -250), Strength=0.25, Distance=0.004)
-    nt.links.new(n1.outputs['Fac'], b1.inputs['Height'])
-    add = node(nt, 'ShaderNodeMath', (-450, -300))
-    add.operation = 'ADD'
-    nt.links.new(n2.outputs['Fac'], add.inputs[0])
-    nt.links.new(vor.outputs['Distance'], add.inputs[1])
-    nt.links.new(add.outputs[0], b2.inputs['Height'])
-    nt.links.new(b1.outputs['Normal'], b2.inputs['Normal'])
-    nt.links.new(b2.outputs['Normal'], bsdf.inputs['Normal'])
+    pr.inputs['To Min'].default_value = 0.8
+    pr.inputs['To Max'].default_value = 1.25
+    L(geo.outputs['Pointiness'], pr.inputs['Value'])
+    wear = nd(nt, 'ShaderNodeMix', (-360, 400))
+    wear.data_type = 'RGBA'
+    wear.blend_type = 'MULTIPLY'
+    wear.inputs['Factor'].default_value = 1.0
+    L(speck.outputs[2], wear.inputs[6])
+    comb = nd(nt, 'ShaderNodeCombineColor', (-560, 600))
+    for i in range(3):
+        L(pr.outputs['Result'], comb.inputs[i])
+    L(comb.outputs['Color'], wear.inputs[7])
+
+    # 刻痕顏色：深色積灰，或朱紅舊顏料（局部磨掉）
+    gtex = nt.nodes.new('ShaderNodeTexImage')
+    gtex.location = (-1000, -300)
+    gtex.image = g_img
+    gtex.image.colorspace_settings.name = 'Non-Color'
+    L(uv.outputs['UV'], gtex.inputs['Vector'])
+    if verm:
+        wn = nd(nt, 'ShaderNodeTexNoise', (-1000, -600), Scale=22.0, Detail=10.0, Roughness=0.7)
+        L(mp.outputs['Vector'], wn.inputs['Vector'])
+        vr = nd(nt, 'ShaderNodeValToRGB', (-780, -600))
+        vr.color_ramp.elements[0].color = (0.22, 0.18, 0.15, 1)
+        vr.color_ramp.elements[1].color = (0.40, 0.03, 0.012, 1)
+        vr.color_ramp.elements[0].position = 0.33
+        vr.color_ramp.elements[1].position = 0.40
+        L(wn.outputs['Fac'], vr.inputs['Fac'])
+        groove_col = vr.outputs['Color']
+    else:
+        gc = nd(nt, 'ShaderNodeMix', (-780, -600))
+        gc.data_type = 'RGBA'
+        gc.inputs[6].default_value = (0.045, 0.04, 0.035, 1)
+        gc.inputs[7].default_value = (0.10, 0.09, 0.08, 1)
+        L(n2.outputs['Fac'], gc.inputs['Factor'])
+        groove_col = gc.outputs[2]
+    fin = nd(nt, 'ShaderNodeMix', (-150, 200))
+    fin.data_type = 'RGBA'
+    L(gtex.outputs['Color'], fin.inputs['Factor'])
+    L(wear.outputs[2], fin.inputs[6])
+    L(groove_col, fin.inputs[7])
+    L(fin.outputs[2], bsdf.inputs['Base Color'])
+    rough = nd(nt, 'ShaderNodeMapRange', (-150, -100))
+    rough.inputs['To Min'].default_value = 0.9
+    rough.inputs['To Max'].default_value = 0.6 if verm else 1.0
+    L(gtex.outputs['Color'], rough.inputs['Value'])
+    L(rough.outputs['Result'], bsdf.inputs['Roughness'])
+    # 細部凹凸
+    bump = nd(nt, 'ShaderNodeBump', (-150, -350), Strength=0.3, Distance=0.004)
+    L(n2.outputs['Fac'], bump.inputs['Height'])
+    L(bump.outputs['Normal'], bsdf.inputs['Normal'])
     return m
 
 
-def verm_material():
-    """朱紅描紅：舊顏料，局部磨掉露出石頭"""
-    m = bpy.data.materials.new('verm')
-    m.use_nodes = True
-    nt = m.node_tree
-    bsdf = nt.nodes['Principled BSDF']
-    bsdf.inputs['Roughness'].default_value = 0.62
-    tex = node(nt, 'ShaderNodeTexCoord', (-900, 0))
-    n = node(nt, 'ShaderNodeTexNoise', (-700, 0), Scale=18.0, Detail=10.0, Roughness=0.7)
-    nt.links.new(tex.outputs['Object'], n.inputs['Vector'])
-    ramp = node(nt, 'ShaderNodeValToRGB', (-450, 0))
-    ramp.color_ramp.elements[0].color = (0.30, 0.25, 0.21, 1)      # 磨掉處露出的石頭
-    ramp.color_ramp.elements[1].color = (0.42, 0.028, 0.012, 1)    # 朱紅
-    ramp.color_ramp.elements[0].position = 0.36
-    ramp.color_ramp.elements[1].position = 0.42
-    nt.links.new(n.outputs['Fac'], ramp.inputs['Fac'])
-    nt.links.new(ramp.outputs['Color'], bsdf.inputs['Base Color'])
-    return m
+def build(ch, verm, font_path, idx):
+    h, g = heightmap(ch, font_path, 1000 + idx)
+    hp = os.path.join(OUT, '_h.png')
+    gp = os.path.join(OUT, '_g.png')
+    save16(h, hp)
+    save16(g, gp)
+    h_img = bpy.data.images.load(hp)
+    h_img.colorspace_settings.name = 'Non-Color'
+    g_img = bpy.data.images.load(gp)
+
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=GRID, y_subdivisions=GRID, size=1)
+    plane = bpy.context.object
+    tex = bpy.data.textures.new('h', 'IMAGE')
+    tex.image = h_img
+    tex.extension = 'EXTEND'
+    disp = plane.modifiers.new('disp', 'DISPLACE')
+    disp.texture = tex
+    disp.texture_coords = 'UV'
+    disp.mid_level = 1.0
+    disp.strength = 0.07
+    bpy.ops.object.shade_smooth()
+    plane.data.materials.append(tile_material(h_img, g_img, verm, idx))
+    return plane
 
 
-def build_tile(ch, verm, font, idx):
-    random.seed(1000 + idx)
-    face = stone_material('stone', (0.62, 0.57, 0.49, 1), (0.36, 0.33, 0.29, 1), idx)
-    groove = stone_material('groove', (0.30, 0.27, 0.24, 1), (0.16, 0.14, 0.12, 1), idx + 50)
-    vm = verm_material() if verm else None
-
-    # 石塊
-    bpy.ops.mesh.primitive_cube_add(size=1)
-    slab = bpy.context.object
-    slab.scale = (1.0, 0.36, 1.0)            # X 寬、Y 厚、Z 高（面向 −Y 的鏡頭）
-    bpy.ops.object.transform_apply(scale=True)
-    bev = slab.modifiers.new('bev', 'BEVEL')
-    bev.width = 0.022
-    bev.segments = 3
-    bpy.ops.object.modifier_apply(modifier='bev')
-    slab.data.materials.append(face)
-
-    # 崩角：在邊緣挖掉幾塊不規則的小石頭
-    for k in range(7):
-        edge = random.choice(['top', 'bottom', 'left', 'right'])
-        u = random.uniform(-0.5, 0.5)
-        pos = {'top': (u, -0.18, 0.5), 'bottom': (u, -0.18, -0.5), 'left': (-0.5, -0.18, u), 'right': (0.5, -0.18, u)}[edge]
-        bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=random.uniform(0.025, 0.07), location=pos)
-        chip = bpy.context.object
-        chip.rotation_euler = (random.random() * 3, random.random() * 3, random.random() * 3)
-        chip.scale = (random.uniform(0.8, 1.6), random.uniform(0.6, 1.2), random.uniform(0.8, 1.4))
-        chip.data.materials.append(face)
-        mod = slab.modifiers.new('chip', 'BOOLEAN')
-        mod.operation = 'DIFFERENCE'
-        mod.object = chip
-        mod.solver = 'EXACT'
-        bpy.context.view_layer.objects.active = slab
-        bpy.ops.object.modifier_apply(modifier='chip')
-        bpy.data.objects.remove(chip)
-
-    # 刻字：文字轉成網格，用布林挖進石塊
-    bpy.ops.object.text_add()
-    tx = bpy.context.object
-    tx.data.body = ch
-    tx.data.font = font
-    tx.data.size = 0.8
-    tx.data.align_x = 'CENTER'
-    tx.data.align_y = 'CENTER'
-    tx.data.extrude = 0.06
-    tx.data.bevel_depth = 0.012                # 讓刻痕帶斜面
-    tx.data.bevel_resolution = 0
-    tx.rotation_euler = (math.radians(90), 0, 0)
-    tx.location = (0, -0.18 - 0.03, 0.02)
-    bpy.ops.object.convert(target='MESH')
-    tx = bpy.context.object
-    # 文字轉出來的網格法線可能朝內，布林會變成「加上」；先統一朝外
-    bpy.context.view_layer.objects.active = tx
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.select_all(action='SELECT')
-    bpy.ops.mesh.remove_doubles(threshold=0.0002)
-    bpy.ops.mesh.normals_make_consistent(inside=False)
-    bpy.ops.object.mode_set(mode='OBJECT')
-    tx.data.materials.append(vm if verm else groove)
-    bool_mod = slab.modifiers.new('carve', 'BOOLEAN')
-    bool_mod.operation = 'DIFFERENCE'
-    bool_mod.object = tx
-    bool_mod.solver = 'EXACT'
-    try:
-        bool_mod.material_mode = 'TRANSFER'
-    except Exception:
-        pass
-    bpy.context.view_layer.objects.active = slab
-    bpy.ops.object.modifier_apply(modifier='carve')
-    bpy.data.objects.remove(tx)
-    bpy.ops.object.shade_auto_smooth(angle=math.radians(35))
-    return slab
+def sun(elev_deg, azim_deg, strength, angle_deg, color):
+    """平行光：elev 仰角，azim 以畫面上方為 0°、順時針；光從該方向照過來"""
+    bpy.ops.object.light_add(type='SUN')
+    s = bpy.context.object
+    s.data.energy = strength
+    s.data.angle = math.radians(angle_deg)
+    s.data.color = color
+    e, a = math.radians(elev_deg), math.radians(azim_deg)
+    d = np.array([math.sin(a) * math.cos(e), math.cos(a) * math.cos(e), math.sin(e)])   # 指向光源
+    # 燈的 −Z 軸要指向 −d
+    s.rotation_euler = (math.atan2(math.hypot(d[0], d[1]), d[2]), 0, math.atan2(d[1], d[0]) + math.pi / 2)
+    return s
 
 
 def lights_and_camera():
-    # 主光：左上前方、偏硬，讓刻痕投出清楚的陰影
-    bpy.ops.object.light_add(type='AREA', location=(-1.2, -2.2, 2.6))
-    key = bpy.context.object
-    key.data.energy = 170
-    key.data.size = 0.5
-    key.data.color = (1.0, 0.95, 0.88)
-    key.rotation_euler = (math.radians(40), math.radians(-18), math.radians(-25))
-    # 右側冷色補光，很弱
-    bpy.ops.object.light_add(type='AREA', location=(2.2, -1.6, 0.2))
-    fill = bpy.context.object
-    fill.data.energy = 22
-    fill.data.size = 2.0
-    fill.data.color = (0.7, 0.8, 1.0)
-    fill.rotation_euler = (math.radians(90), 0, math.radians(55))
-    # 正面正交鏡頭（2D 合成時每塊角度一致）
-    bpy.ops.object.camera_add(location=(0, -4, 0), rotation=(math.radians(90), 0, 0))
+    # 主光：左上方、仰角 48°、偏硬；刻痕往右下投影
+    sun(48, -40, 4.2, 2.5, (1.0, 0.95, 0.88))
+    # 右下方冷色補光，很弱
+    sun(30, 140, 0.35, 12, (0.7, 0.8, 1.0))
+    # 正上方正交鏡頭（2D 合成時每塊角度一致）
+    bpy.ops.object.camera_add(location=(0, 0, 4), rotation=(0, 0, 0))
     cam = bpy.context.object
     cam.data.type = 'ORTHO'
-    cam.data.ortho_scale = 1.08
+    cam.data.ortho_scale = 1.04
     bpy.context.scene.camera = cam
 
 
-def key_of(ch, verm):
-    return ('v_' if verm else '') + format(ord(ch), 'x')
-
-
 def main():
-    os.makedirs(os.path.join(HERE, 'tiles'), exist_ok=True)
+    os.makedirs(OUT, exist_ok=True)
     fpath = static_font()
     for i, (ch, verm) in enumerate(TILES):
         t0 = time.time()
         sc = reset()
-        font = bpy.data.fonts.load(fpath)
-        build_tile(ch, verm, font, i)
+        build(ch, verm, fpath, i)
         lights_and_camera()
-        sc.render.filepath = os.path.join(HERE, 'tiles', key_of(ch, verm) + '.png')
+        sc.render.filepath = os.path.join(OUT, key_of(ch, verm) + '.png')
         bpy.ops.render.render(write_still=True)
         print(f'{ch}{"（朱紅）" if verm else ""} → {key_of(ch, verm)}.png  {time.time() - t0:.1f} 秒', flush=True)
+    for tmp in ('_h.png', '_g.png'):
+        p = os.path.join(OUT, tmp)
+        if os.path.exists(p):
+            os.remove(p)
 
 
 main()
