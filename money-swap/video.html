@@ -202,13 +202,29 @@
     return { x, y, rot: rot * Math.PI / 180, zoom };
   }
 
-  // ---------- 鏡頭基礎運動 ----------
-  const CAM = {
-    zoom: [[0, 1.0], [4.0, 1.05], [4.3, 1.0], [12, 1.06], [19.4, 1.08], [20.9, 1.22], [21.45, 1.22], [21.7, 1.02], [25.2, 1.07], [25.6, 1.0], [28.6, 1.04], [31.2, 1.08]],
-    cx: [[0, 540], [19.4, 540], [20.9, 330], [21.45, 330], [22.2, 460], [25.2, 500], [25.6, 540], [31.2, 540]],
-    cy: [[0, 930], [4.0, 930], [12, 940], [19.4, 930], [20.9, 928], [22.2, 920], [25.6, 930], [31.2, 960]],
-    rot: [[0, 0], [4.0, 0], [6, -1.2], [12, 1.0], [16, -1.0], [19.4, 0.6], [21.45, -1.5], [23, 0.8], [25.6, 0], [31.2, -0.6]],
-  };
+  // ---------- 鏡頭：分鏡系統（SHOTS 在 timeline.js） ----------
+  const easeOutExpo = (x) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x));
+  const SHOTS = T.SHOTS.map((sh) => {
+    const d = sh.dur || 0;
+    const [ts, te] = sh.type === 'smooth' ? [sh.t, sh.t + d] : sh.type === 'cut' ? [sh.t, sh.t] : [sh.t - d, sh.t];
+    return Object.assign({ drift: 0.015 }, sh, { ts, te });
+  });
+  function shotCam(t) {
+    let cur = { cx: 540, cy: 930, z: 1, r: 0 }, since = 0, drift = 0.015, whip = 0;
+    for (const sh of SHOTS) {
+      if (t < sh.ts) break;
+      const target = { cx: sh.cx, cy: sh.cy, z: sh.z, r: sh.r };
+      if (t < sh.te) {
+        const p = (t - sh.ts) / (sh.te - sh.ts);
+        const e = sh.type === 'crash' ? easeOutExpo(p) : easeIO(p);
+        const base = { cx: cur.cx, cy: cur.cy, z: cur.z * (1 + drift * (sh.ts - since)), r: cur.r };
+        if (sh.type === 'whip') whip = Math.sin(Math.PI * p);
+        return { cx: lerp(base.cx, target.cx, e), cy: lerp(base.cy, target.cy, e), z: lerp(base.z, target.z, e), r: lerp(base.r, target.r, e), whip };
+      }
+      cur = target; since = sh.te; drift = sh.drift;
+    }
+    return { cx: cur.cx, cy: cur.cy, z: cur.z * (1 + drift * (t - since)), r: cur.r, whip: 0 };
+  }
 
   // ---------- 背景 ----------
   let bgFloor = null, grainTiles = null, haloCv = null, chromaCv = null;
@@ -430,9 +446,10 @@
   // ---------- 一個瞬間的完整畫面 ----------
   function scene(ctx, t) {
     const sh = shake(t);
-    const zoom = keys(t, CAM.zoom) * 1.04 + sh.zoom;
-    const cx = keys(t, CAM.cx), cy = keys(t, CAM.cy);
-    const rot = keys(t, CAM.rot) * Math.PI / 180 + sh.rot;
+    const cam = shotCam(t);
+    const zoom = cam.z * (1 + sh.zoom);
+    const cx = cam.cx, cy = cam.cy;
+    const rot = cam.r * Math.PI / 180 + sh.rot;
     const camera = (par) => {
       ctx.translate(W / 2 + sh.x * par, H / 2 + sh.y * par);
       ctx.rotate(rot * par);
@@ -592,8 +609,9 @@
   const sub = mk(W, H), subCtx = sub.getContext('2d');
 
   function renderAt(t) {
+    const shutter = SHUTTER * (1 + 2.2 * shotCam(t).whip);     // 甩鏡時快門加長
     for (let i = 0; i < MB; i++) {
-      const ts = MB > 1 ? t + ((i + 0.5) / MB - 0.5) * SHUTTER : t;
+      const ts = MB > 1 ? t + ((i + 0.5) / MB - 0.5) * shutter : t;
       subCtx.setTransform(1, 0, 0, 1, 0, 0);
       scene(subCtx, ts);
       accCtx.globalAlpha = 1 / (i + 1);
