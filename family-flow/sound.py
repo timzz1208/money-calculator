@@ -3,7 +3,7 @@
 所有聲音都用程式合成，時間點對齊 video.html 的時間軸。
 聲音語言配合「紙與墨」：紙張、筆劃、木質敲擊、印章落下＋低調的環境和弦。
 
-用法：python3 sound.py [輸出.wav]
+用法：python3 sound.py [音效.wav] [--voice 旁白.wav --mix 混音.wav]
 """
 import sys
 import wave
@@ -11,7 +11,22 @@ import numpy as np
 from scipy import signal
 
 SR = 48000
-DUR = 30.0
+# 旁白版：真實時間 → 原本 30 秒的劇情時間（與 video.html 的 TIME_MAP 相同）
+TIME_MAP = [(0, 0), (2.05, 0.9), (2.75, 1.6), (5.2, 3.4), (10.7, 7.4), (12.6, 8.2),
+            (18.5, 12.2), (22.6, 16.2), (27.0, 20.2), (33.9, 25.6), (39.5, 30)]
+DUR = TIME_MAP[-1][0]
+
+
+def real_t(tau):
+    """劇情時間 → 真實時間"""
+    return float(np.interp(tau, [b for a, b in TIME_MAP], [a for a, b in TIME_MAP]))
+
+
+def story_t(t):
+    """真實時間 → 劇情時間"""
+    return float(np.interp(t, [a for a, b in TIME_MAP], [b for a, b in TIME_MAP]))
+
+
 N = int(SR * DUR)
 rng = np.random.default_rng(314159)
 L = np.zeros(N)
@@ -25,8 +40,9 @@ def ts(d):
     return np.arange(int(d * SR)) / SR
 
 
-def place(x, t0, gain=1.0, pan=0.0, dry=False):
-    i = int(t0 * SR)
+def place(x, t0, gain=1.0, pan=0.0, dry=False, real=False):
+    """t0 預設是劇情時間，real=True 時是真實時間"""
+    i = int((t0 if real else real_t(t0)) * SR)
     if i >= N:
         return
     x = x[: N - i]
@@ -194,7 +210,8 @@ def glide(f0, f1, d, dec=None):
 
 
 def pad(notes, t0, t1, fade_in, fade_out, gain, hard_stop=False):
-    """溫和的和弦墊底：每個音 3 個略微失諧的聲部"""
+    """溫和的和弦墊底：每個音 3 個略微失諧的聲部（t0、t1 為劇情時間）"""
+    t0, t1 = real_t(t0), real_t(t1)
     d = t1 - t0
     t = ts(d)
     n = len(t)
@@ -215,15 +232,15 @@ def pad(notes, t0, t1, fade_in, fade_out, gain, hard_stop=False):
     if fo:
         e[-fo:] = np.linspace(1, 0, fo) ** (1 if hard_stop else 2)
     x = x * e * trem / (len(notes) * 3)
-    place(x, t0, gain, 0.0)
+    place(x, t0, gain, 0.0, real=True)
 
 
 def flow_texture(rate_fn, t0, t1, gain=0.05, seed=1):
-    """墨點流動：大量細小的點擊聲，密度跟著畫面的粒子流"""
+    """墨點流動：大量細小的點擊聲，密度跟著畫面的粒子流（真實時間）"""
     r = np.random.default_rng(seed)
     t = t0
     while t < t1:
-        rate = rate_fn(t)
+        rate = rate_fn(story_t(t))
         if rate <= 0:
             t += 0.02
             continue
@@ -231,7 +248,7 @@ def flow_texture(rate_fn, t0, t1, gain=0.05, seed=1):
         if t >= t1:
             break
         f = r.uniform(2200, 6500)
-        place(tick(f, 0.02), t, gain * r.uniform(0.3, 1.0), r.uniform(-0.6, 0.6))
+        place(tick(f, 0.02), t, gain * r.uniform(0.3, 1.0), r.uniform(-0.6, 0.6), real=True)
 
 
 # ---------- 時間軸（對齊 video.html） ----------
@@ -253,7 +270,7 @@ def rate_fn(t):
     return 55 * (main + buf + part + tank) * closing
 
 
-flow_texture(rate_fn, 0.0, 29.5, 0.045)
+flow_texture(rate_fn, 0.0, real_t(29.5), 0.045)
 
 # 0.9 劃斷：兩道筆劃＋低頻一沉，接著一瞬間安靜
 place(slash(), CUT, 0.9, -0.2)
@@ -300,9 +317,9 @@ place(swish(0.25, 800, 5000), 13.65, 0.2, 0.2)
 place(marimba(midi(55), 1.2), 14.6, 0.2)
 
 # 選擇三：另一半心跳加快（跟畫面脈動同步，每 0.524 秒一次）
-tt = 17.0
-while tt < 20.1:
-    place(heartbeat(), tt, 0.55, dry=True)
+tt = real_t(17.0)
+while tt < real_t(20.1):
+    place(heartbeat(), tt, 0.55, dry=True, real=True)
     tt += 2 * np.pi / 12
 place(marimba(midi(57), 1.2), 18.2, 0.18)
 
@@ -340,15 +357,88 @@ mix *= 10 ** (-1 / 20) / max(1e-9, np.max(np.abs(mix)))    # 峰值 −1 dBFS
 fade = int(0.05 * SR)
 mix[:, -fade:] *= np.linspace(1, 0, fade)
 
-out = sys.argv[1] if len(sys.argv) > 1 else 'sfx.wav'
-pcm = (np.clip(mix.T, -1, 1) * 32767).astype('<i2')
-with wave.open(out, 'wb') as w:
-    w.setnchannels(2)
-    w.setsampwidth(2)
-    w.setframerate(SR)
-    w.writeframes(pcm.tobytes())
+args = sys.argv[1:]
 
-sec_rms = [20 * np.log10(np.sqrt(np.mean(mix[:, i * SR:(i + 1) * SR] ** 2)) + 1e-9) for i in range(int(DUR))]
-print('wrote', out)
-print('每秒音量 dBFS:', ' '.join(f'{v:.0f}' for v in sec_rms))
-print('峰值 dBFS:', round(20 * np.log10(np.max(np.abs(mix))), 2))
+
+def opt(k, d=None):
+    return args[args.index(k) + 1] if k in args else d
+
+
+def write_wav(path, st):
+    pcm = (np.clip(st.T, -1, 1) * 32767).astype('<i2')
+    with wave.open(path, 'wb') as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes(pcm.tobytes())
+
+
+def report(name, st):
+    sec = [20 * np.log10(np.sqrt(np.mean(st[:, i * SR:(i + 1) * SR] ** 2)) + 1e-9) for i in range(int(DUR))]
+    print('wrote', name)
+    print('  每秒音量 dBFS:', ' '.join(f'{v:.0f}' for v in sec))
+    print('  峰值 dBFS:', round(20 * np.log10(np.max(np.abs(st))), 2))
+
+
+out = args[0] if args and not args[0].startswith('--') else 'sfx.wav'
+write_wav(out, mix)
+report(out, mix)
+
+# ---------- 旁白 ----------
+# 原始旁白音檔中每句的位置（秒），與放進影片的真實時間
+VOICE_LINES = [
+    # (來源開始, 來源結束, 放置時間)  句子
+    (0.16, 2.05, 0.15),    # 如果明天沒有薪水，
+    (2.74, 5.10, 2.65),    # 林家每個月，會少四萬。
+    (5.91, 10.97, 5.45),   # 收入停了，房貸、學費、生活費，一樣都不會停。
+    (11.78, 13.50, 10.85),  # 這時候，只能選。
+    (14.61, 20.15, 12.70),  # 動用存款？六十萬，撐十五個月就見底。
+    (20.77, 23.74, 18.70),  # 賣掉房子？缺口變小，但要搬家、孩子轉學。
+    (24.66, 28.48, 22.80),  # 讓另一半多扛？缺口還在，人也會累。
+    (29.16, 35.72, 27.20),  # 如果事先準備好緩衝，缺口先有人接住，家人就有時間好好決定。
+    (36.23, 40.60, 34.20),  # 先說清楚要守住的生活，再確認正式的保障方向。
+]
+
+vpath = opt('--voice')
+if vpath:
+    with wave.open(vpath) as w:
+        vsr, ch = w.getframerate(), w.getnchannels()
+        raw = np.frombuffer(w.readframes(w.getnframes()), dtype='<i2').astype(float) / 32768
+    if ch > 1:
+        raw = raw.reshape(-1, ch).mean(axis=1)
+    from math import gcd
+    g = gcd(SR, vsr)
+    src = signal.resample_poly(raw, SR // g, vsr // g)
+    V = np.zeros(N)
+    edge = int(0.015 * SR)
+    for a, b, at in VOICE_LINES:
+        seg = src[int(a * SR):int(b * SR)].copy()
+        seg[:edge] *= np.linspace(0, 1, edge)
+        seg[-edge:] *= np.linspace(1, 0, edge)
+        i = int(at * SR)
+        seg = seg[: N - i]
+        V[i:i + len(seg)] += seg
+    V = hp(V, 85)
+    # 輕度壓縮：讓音量穩定
+    env = np.maximum(signal.sosfilt(sos('lowpass', 12), np.abs(V)), 0)
+    thr = np.percentile(env[env > 1e-4], 70) if np.any(env > 1e-4) else 1
+    V = V / np.maximum(1, (env / thr) ** 0.4)
+    active = env > thr * 0.25
+    V *= 10 ** (-17 / 20) / (np.sqrt(np.mean(V[active] ** 2)) + 1e-12)
+
+    # 旁白說話時把音效與配樂壓低約 11 dB（ducking）
+    speech = (signal.sosfilt(sos('lowpass', 6), active.astype(float)) > 0.15).astype(float)
+    att, rel = np.exp(-1 / (0.04 * SR)), np.exp(-1 / (0.35 * SR))
+    duck_env = signal.lfilter([1 - rel], [1, -rel], speech)            # 緩放
+    duck_env = np.maximum(duck_env, signal.lfilter([1 - att], [1, -att], speech))
+    duck_env = np.clip(duck_env * 1.4, 0, 1)
+    duck = 1 - duck_env * (1 - 10 ** (-11 / 20))
+    final = mix * 0.72 * duck + V[None, :] * np.array([[1.0], [1.0]])
+    final *= 10 ** (-1 / 20) / max(1e-9, np.max(np.abs(final)))
+    bg = mix * 0.72 * duck
+    on = speech > 0.5
+    snr = 20 * np.log10(np.sqrt(np.mean(V[on] ** 2)) / (np.sqrt(np.mean(bg[:, on] ** 2)) + 1e-12))
+    print(f'  說話時人聲比背景大 {snr:.1f} dB')
+    mpath = opt('--mix', 'mix.wav')
+    write_wav(mpath, final)
+    report(mpath, final)

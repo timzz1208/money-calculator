@@ -4,9 +4,11 @@
 
 | 檔案 | 用途 |
 |---|---|
-| `family-flow-ig.mp4` | IG Reels 成品：30 秒、1080×1920、60fps、H.264，含音效 |
-| `sfx.wav` | 單獨的音效音軌（48kHz 立體聲），可在剪輯軟體裡換掉或調音量 |
-| `sound.py` | 用程式合成音效與配樂，時間點對齊影片 |
+| `family-flow-ig.mp4` | IG Reels 成品：39.5 秒、1080×1920、60fps、H.264，含旁白＋音效 |
+| `mix.wav` | 最終混音（旁白＋音效＋配樂） |
+| `sfx.wav` | 只有音效與配樂、沒有旁白的音軌，可在剪輯軟體裡換掉或調音量 |
+| `narration.wav` | 旁白原始音檔（AI 語音生成） |
+| `sound.py` | 合成音效與配樂、切旁白、ducking 混音，時間點對齊影片 |
 | `video.html` | 影片原始動畫；瀏覽器打開可預覽、暫停、拖曳時間軸 |
 | `interactive.html` | 互動模擬器：調整虛構數字、切換中斷、比較四條路 |
 | `engine.js` | 兩者共用的繪圖引擎（粒子流、水桶、節點） |
@@ -17,6 +19,26 @@
 有纖維的紙底、墨黑主色、朱紅代表家庭責任；群青只留給「緩衝」，最後才第一次出現。
 不用發光，改用網點（水桶）、木刻斜線（存款）、朱紅印章（家）與定格顆粒做質感。
 標題用思源宋體 Black，標籤用思源黑體。
+
+## 旁白版時間軸
+
+旁白總長約 33 秒，所以畫面依旁白拉長到 39.5 秒。`video.html` 與 `sound.py` 共用同一張 `TIME_MAP`，
+把真實時間對應到原本 30 秒的劇情時間；劇情照比例拉長，粒子與水波仍用正常速度流動。
+下表的秒數是原本 30 秒版的劇情時間。
+
+| 旁白 | 放置時間（秒） |
+|---|---|
+| 如果明天沒有薪水， | 0.15（念完後 2.05 劃斷） |
+| 林家每個月，會少四萬。 | 2.65 |
+| 收入停了，房貸、學費、生活費，一樣都不會停。 | 5.45 |
+| 這時候，只能選。 | 10.85 |
+| 動用存款？六十萬，撐十五個月就見底。 | 12.70 |
+| 賣掉房子？缺口變小，但要搬家、孩子轉學。 | 18.70 |
+| 讓另一半多扛？缺口還在，人也會累。 | 22.80 |
+| 如果事先準備好緩衝，缺口先有人接住，家人就有時間好好決定。 | 27.20 |
+| 先說清楚要守住的生活，再確認正式的保障方向。 | 34.20 |
+
+旁白說話時，音效與配樂自動壓低約 11 dB，說話時人聲比背景大約 12.6 dB。
 
 ## 影片分鏡
 
@@ -44,8 +66,8 @@
 | 25.8–27.2 | 四行字各一道筆劃，印章落下，收在 C 大調 |
 
 ```bash
-python3 sound.py sfx.wav   # 需要 numpy、scipy
-ffmpeg -i 無聲影片.mp4 -i sfx.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k -shortest family-flow-ig.mp4
+python3 sound.py sfx.wav --voice narration.wav --mix mix.wav   # 需要 numpy、scipy
+ffmpeg -i 無聲影片.mp4 -i mix.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 192k -shortest family-flow-ig.mp4
 ```
 
 ## 重新輸出影片
@@ -53,7 +75,7 @@ ffmpeg -i 無聲影片.mp4 -i sfx.wav -map 0:v -map 1:a -c:v copy -c:a aac -b:a 
 需要 Node + Playwright（Chromium）與含 libx264 的 ffmpeg，以及 Noto Sans TC、Noto Serif TC 字體檔：
 
 ```bash
-FONT_TTF=/path/to/NotoSansTC.ttf SERIF_TTF=/path/to/NotoSerifTC.ttf FFMPEG=/path/to/ffmpeg node render.js
+FONT_TTF=/path/to/NotoSansTC.ttf SERIF_TTF=/path/to/NotoSerifTC.ttf FFMPEG=/path/to/ffmpeg node render.js --vbitrate 5.5M
 # 只輸出幾張定格檢查：
 FONT_TTF=/path/to/NotoSansTC.ttf SERIF_TTF=/path/to/NotoSerifTC.ttf node render.js --frames 1.5,10.5,28.5
 ```

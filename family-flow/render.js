@@ -13,6 +13,7 @@ const SERIF = opt('--serif', process.env.SERIF_TTF || '');
 const OUT = opt('--out', path.join(__dirname, 'family-flow-ig.mp4'));
 const FFMPEG = opt('--ffmpeg', process.env.FFMPEG || 'ffmpeg');
 const stills = opt('--frames', null);
+const VBR = opt('--vbitrate', null);   // 例如 5.5M；不給就用 crf 17
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
@@ -43,7 +44,8 @@ const stills = opt('--frames', null);
   const dur = await page.evaluate(() => window.DURATION);
   const total = Math.round(dur * FPS);
   const ff = spawn(FFMPEG, ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-i', '-',
-    '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', OUT],
+    '-c:v', 'libx264', '-preset', 'slow', ...(VBR ? ['-b:v', VBR, '-maxrate', VBR, '-bufsize', '12M', '-tune', 'grain'] : ['-crf', '17']),
+    '-pix_fmt', 'yuv420p', '-movflags', '+faststart', OUT],
     { stdio: ['pipe', 'inherit', 'inherit'] });
   for (let f = 0; f < total; f++) {
     await page.evaluate((t) => window.renderAt(t), Math.min(f / FPS, dur - 1e-3));
