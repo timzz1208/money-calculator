@@ -1,0 +1,360 @@
+<title>家庭責任流</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800&family=Noto+Serif+TC:wght@900&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* 版面：左邊是 9:16 的紙本圖解舞台，右邊像雜誌內頁的操作欄；手機時上下堆疊 */
+  :root {
+    --paper: #ECE8DF;      /* 紙 */
+    --paper-deep: #E2DDD2; /* 分區底色 */
+    --ink: #1D1F25;        /* 墨 */
+    --ink-soft: #55565C;
+    --rule: rgba(29,31,37,0.22);
+    --verm: #D8432A;       /* 朱紅：家庭責任、中斷 */
+    --blue: #2C4C9E;       /* 群青：緩衝 */
+    --font-display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+    --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    color-scheme: light;
+  }
+  html, body { background: var(--paper); color: var(--ink); }
+  body { font-family: var(--font-body); font-size: 15px; line-height: 1.65;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .3 0 0 0 0 .22 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 48px;
+    display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 40px; align-items: start; }
+  @media (max-width: 820px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; } }
+
+  .stage { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+  @media (max-width: 820px) { .stage { position: static; } }
+  .stage canvas { display: block; width: 100%; max-width: 100%; aspect-ratio: 9 / 16; border-radius: 4px;
+    background: var(--paper); box-shadow: 0 1px 0 var(--rule), 0 18px 40px rgba(60,45,25,0.18); cursor: pointer; }
+  @media (max-width: 820px) { .stage canvas { max-height: 72vh; width: auto; margin: 0 auto; } }
+  .stage-note { margin-top: 10px; font-size: 12.5px; color: var(--ink-soft); text-align: center; }
+
+  .panel { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
+  .kicker { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; font-weight: 700; letter-spacing: 0.18em;
+    border-bottom: 3px double var(--ink); padding-bottom: 8px; }
+  .kicker span:last-child { font-weight: 500; letter-spacing: 0.04em; color: var(--ink-soft); }
+  header h1 { margin: 14px 0 0; font-family: var(--font-display); font-size: clamp(32px, 4.6vw, 48px); font-weight: 900; line-height: 1.18; text-wrap: balance; }
+  header h1 em { font-style: normal; color: var(--verm); }
+  header p { margin: 12px 0 0; color: var(--ink-soft); max-width: 36em; }
+
+  section { border-top: 2px solid var(--ink); padding-top: 14px; display: flex; flex-direction: column; gap: 14px; }
+  .step { display: flex; align-items: baseline; gap: 12px; }
+  .step b { font-family: var(--font-data); font-size: 12px; color: var(--verm); letter-spacing: 0.08em; }
+  .step h2 { margin: 0; font-family: var(--font-display); font-size: 20px; font-weight: 900; }
+  .hint { margin: -6px 0 0; font-size: 13px; color: var(--ink-soft); }
+
+  .sliders { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; }
+  @media (max-width: 480px) { .sliders { grid-template-columns: minmax(0, 1fr); } }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field label { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; color: var(--ink-soft); }
+  .field output { font-family: var(--font-data); color: var(--ink); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--ink); }
+
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--verm); outline-offset: 2px; }
+  .cut { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 13px 16px; border-radius: 4px;
+    border: 2px solid var(--ink); background: var(--ink); color: var(--paper); font-weight: 700; font-size: 16px; }
+  .cut:hover { background: #2c2f37; }
+  .cut[aria-pressed="true"] { background: transparent; color: var(--ink); }
+  .cut .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--verm); }
+
+  .paths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .path { text-align: left; padding: 12px 14px; border-radius: 4px; border: 2px solid var(--ink); background: transparent;
+    display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .path strong { font-size: 15.5px; }
+  .path span { font-size: 12.5px; color: var(--ink-soft); }
+  .path:hover:not(:disabled):not([aria-checked="true"]) { background: var(--paper-deep); }
+  .path[aria-checked="true"] { background: var(--ink); color: var(--paper); }
+  .path[aria-checked="true"] span { color: rgba(236,232,223,0.72); }
+  .path[data-p="buffer"][aria-checked="true"] { background: var(--blue); border-color: var(--blue); }
+  .paths[aria-disabled="true"] .path { opacity: 0.4; cursor: not-allowed; }
+
+  .result { font-size: 17px; font-weight: 500; margin: 0; }
+  .compare { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .compare th, .compare td { padding: 8px 4px; border-top: 1px solid var(--rule); text-align: left; font-weight: 500; }
+  .compare th { color: var(--ink-soft); font-weight: 500; }
+  .compare td { font-family: var(--font-data); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .compare tr.on th { color: var(--ink); font-weight: 700; }
+  .compare tr.on td { color: var(--verm); }
+  .compare-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--ink-soft); }
+  .replay { align-self: flex-start; border: 1px solid var(--ink); background: transparent; border-radius: 4px; padding: 6px 14px; font-size: 13.5px; }
+  .replay:hover { background: var(--paper-deep); }
+
+  footer { font-size: 12.5px; color: var(--ink-soft); line-height: 1.75; border-top: 1px solid var(--rule); padding-top: 14px; }
+  footer strong { color: var(--ink); font-weight: 700; }
+</style>
+
+<div class="wrap">
+  <div class="stage">
+    <canvas id="stage" width="1080" height="1920" aria-label="家庭收入與責任的水流示意動畫"></canvas>
+    <p class="stage-note">點一下「主要收入」的圓點，也可以切換中斷</p>
+  </div>
+
+  <div class="panel">
+    <header>
+      <div class="kicker"><span>圖解　收入中斷之後</span><span>@timzz1208</span></div>
+      <h1>收入中斷時，<br><em>誰接住這些責任？</em></h1>
+      <p>一個虛構家庭的收入與支出。先看收入停掉時缺口有多大，再比較四條路各能撐多久。</p>
+    </header>
+
+    <section aria-labelledby="s1">
+      <div class="step"><b>STEP 1</b><h2 id="s1">虛構的林家（每月，單位：萬元）</h2></div>
+      <p class="hint">數字都是範例，可以自己調。請不要輸入真實客戶資料。</p>
+      <div class="sliders">
+        <div class="field"><label for="main">主要收入 <output for="main" data-o="main"></output></label><input id="main" type="range" min="0" max="15" step="0.5" value="5"></div>
+        <div class="field"><label for="partner">另一半收入 <output for="partner" data-o="partner"></output></label><input id="partner" type="range" min="0" max="10" step="0.5" value="3"></div>
+        <div class="field"><label for="mort">房貸 <output for="mort" data-o="mort"></output></label><input id="mort" type="range" min="0" max="6" step="0.1" value="2.8"></div>
+        <div class="field"><label for="edu">孩子教育 <output for="edu" data-o="edu"></output></label><input id="edu" type="range" min="0" max="4" step="0.1" value="1.2"></div>
+        <div class="field"><label for="life">日常生活 <output for="life" data-o="life"></output></label><input id="life" type="range" min="0.5" max="6" step="0.1" value="3"></div>
+        <div class="field"><label for="savings">存款 <output for="savings" data-o="savings"></output></label><input id="savings" type="range" min="0" max="300" step="5" value="60"></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="s2">
+      <div class="step"><b>STEP 2</b><h2 id="s2">模擬主要收入中斷</h2></div>
+      <button id="cut" class="cut" type="button" aria-pressed="false"><span class="dot" aria-hidden="true"></span><span id="cutLabel">讓主要收入中斷</span></button>
+    </section>
+
+    <section aria-labelledby="s3">
+      <div class="step"><b>STEP 3</b><h2 id="s3">家裡選哪一條路？</h2></div>
+      <div class="paths" id="paths" role="radiogroup" aria-labelledby="s3" aria-disabled="true">
+        <button class="path" type="button" role="radio" data-p="savings" aria-checked="true"><strong>動用存款</strong><span>缺口全部由存款補</span></button>
+        <button class="path" type="button" role="radio" data-p="sell" aria-checked="false"><strong>賣掉房子</strong><span>少了房貸，改付房租</span></button>
+        <button class="path" type="button" role="radio" data-p="partner" aria-checked="false"><strong>另一半多扛</strong><span>兼職增加收入</span></button>
+        <button class="path" type="button" role="radio" data-p="buffer" aria-checked="false"><strong>事先有緩衝</strong><span>先由緩衝補缺口</span></button>
+      </div>
+      <div class="field" data-for="sell" hidden><label for="rent">改租屋的房租 <output for="rent" data-o="rent"></output></label><input id="rent" type="range" min="0.5" max="4" step="0.1" value="1.8"></div>
+      <div class="field" data-for="partner" hidden><label for="extra">另一半多賺 <output for="extra" data-o="extra"></output></label><input id="extra" type="range" min="0" max="4" step="0.5" value="1"></div>
+      <div class="field" data-for="buffer" hidden><label for="years">假設緩衝能補足缺口 <output for="years" data-o="years"></output></label><input id="years" type="range" min="1" max="10" step="1" value="3"></div>
+    </section>
+
+    <section aria-labelledby="s4" aria-live="polite">
+      <div class="step"><b>結果</b><h2 id="s4">存款能撐多久</h2></div>
+      <p class="result" id="result"></p>
+      <div>
+        <div class="compare-head"><span>四條路比較（同一組數字）</span><span>每月缺口／存款可撐</span></div>
+        <table class="compare" id="compare"><tbody></tbody></table>
+      </div>
+      <button class="replay" id="replay" type="button">重播 60 個月</button>
+    </section>
+
+    <footer>
+      <strong>示意模型</strong>：只計算「支出 − 收入」的缺口與存款消耗，未計入利息、通膨、稅務與醫療等變化，也不代表特定商品、核保結果、保額建議或給付承諾。正式規劃請確認條款、費用、投保條件與長期可負擔程度。<br>@timzz1208
+    </footer>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script>
+(function () {
+  'use strict';
+  const { COL, clamp, lerp } = FF;
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const $ = (id) => document.getElementById(id);
+  const IDS = ['main', 'partner', 'mort', 'edu', 'life', 'savings', 'rent', 'extra', 'years'];
+  const UNIT = { years: ' 年' };
+  const PATH_NAMES = { savings: '動用存款', sell: '賣掉房子', partner: '另一半多扛', buffer: '事先有緩衝' };
+  const MONTHS = 60, PLAY_SECONDS = 9;
+
+  const st = { interrupted: false, path: 'savings', playStart: -1 };
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function params() {
+    const p = {};
+    IDS.forEach((id) => (p[id] = parseFloat($(id).value)));
+    return p;
+  }
+  const fmt = (n) => (Math.round(n * 10) / 10).toString();
+
+  // 純函式：給定數字與路徑，算出每月缺口與存款可撐月數
+  function sim(p, path, interrupted) {
+    const exp = path === 'sell' && interrupted ? p.edu + p.life + p.rent : p.mort + p.edu + p.life;
+    const inc = (interrupted ? 0 : p.main) + p.partner + (path === 'partner' && interrupted ? p.extra : 0);
+    const gap = Math.max(0, exp - inc);
+    const cover = path === 'buffer' && interrupted ? p.years * 12 : 0;
+    const runway = gap <= 0 ? Infinity : cover + Math.floor(p.savings / gap + 1e-9);
+    return { exp, inc, gap, cover, runway };
+  }
+  // 第 m 個月的存款餘額
+  function balanceAt(p, r, m) {
+    const used = Math.max(0, m - r.cover) * r.gap;
+    return Math.max(0, p.savings - used);
+  }
+  const runwayText = (r) => (r.runway === Infinity ? '不必動用' : r.runway >= MONTHS ? `${MONTHS} 個月以上` : `${r.runway} 個月`);
+
+  // ---------- 畫面狀態（互動版會隨操作改變，所以粒子密度用歷史紀錄） ----------
+  function track(v) { return { hist: [[-1e9, v]] }; }
+  function setTrack(tr, now, v) { if (Math.abs(tr.hist[tr.hist.length - 1][1] - v) > 0.01) { tr.hist.push([now, v]); if (tr.hist.length > 40) tr.hist.shift(); } }
+  function readTrack(tr) { return (ts) => { for (let i = tr.hist.length - 1; i >= 0; i--) if (tr.hist[i][0] <= ts) return tr.hist[i][1]; return tr.hist[0][1]; }; }
+  const TR = { main: track(1), part: track(0.6), tank: track(0), out: track(1) };
+  const vis = { levels: [0.1, 0.1, 0.1], tank: 1, glow: [0, 0, 0], mainK: 0 };
+
+  function currentMonth(now) {
+    if (!st.interrupted || st.playStart < 0) return 0;
+    if (reduce) return MONTHS;
+    return clamp((now - st.playStart) / PLAY_SECONDS) * MONTHS;
+  }
+
+  function frame(nowMs) {
+    const now = nowMs / 1000;
+    const p = params();
+    const r = sim(p, st.path, st.interrupted);
+    const m = currentMonth(now);
+    const bal = balanceAt(p, r, m);
+    const covered = st.interrupted && m < r.cover;
+    const drawingSavings = st.interrupted && !covered && r.gap > 0 && bal > 0;
+    const inBuffer = st.path === 'buffer' && st.interrupted;
+
+    // 來源流量（以支出為基準換算密度）
+    const expRef = Math.max(r.exp, 0.1);
+    const mainFlow = st.interrupted ? (covered ? r.gap : 0) : p.main;
+    const partFlow = p.partner + (st.path === 'partner' && st.interrupted ? p.extra : 0);
+    const tankFlow = drawingSavings ? r.gap : 0;
+    const fill = st.interrupted ? Math.min(1, (r.inc + (covered ? r.gap : 0) + tankFlow) / expRef) : Math.min(1, r.inc / expRef);
+    setTrack(TR.main, now, clamp(mainFlow / 6));
+    setTrack(TR.part, now, clamp(partFlow / 6));
+    setTrack(TR.tank, now, clamp(tankFlow / 4));
+    setTrack(TR.out, now, clamp(fill));
+
+    const k = reduce ? 1 : 0.06;
+    const target = 0.15 + 0.65 * fill;
+    for (let i = 0; i < 3; i++) {
+      vis.levels[i] = lerp(vis.levels[i], target, k);
+      const g = st.interrupted ? (fill < 0.999 ? 1 : drawingSavings ? 0.35 : 0) : 0;
+      vis.glow[i] = lerp(vis.glow[i], g, k);
+    }
+    vis.tank = lerp(vis.tank, p.savings > 0 ? bal / p.savings : 0, reduce ? 1 : 0.15);
+    vis.mainK = lerp(vis.mainK, inBuffer ? 1 : 0, reduce ? 1 : 0.08);
+
+    const t = now;
+    FF.background(ctx);
+    const sell = st.path === 'sell' && st.interrupted;
+    const main = inBuffer
+      ? { mode: 'buffer', label: '保障緩衝', sub: covered ? '補缺口中' : '已用完', subColor: covered ? COL.blue : COL.mute,
+          alpha: vis.mainK, dy: -80 * (1 - vis.mainK) }
+      : st.interrupted
+        ? { mode: 'cut', label: '主要收入', sub: '中斷', subColor: COL.verm }
+        : { mode: 'on', label: '主要收入', sub: `${fmt(p.main)} 萬／月` };
+
+    FF.network(ctx, {
+      main,
+      part: { sub: `${fmt(partFlow)} 萬／月`, subColor: st.path === 'partner' && st.interrupted ? COL.verm : null,
+        pulse: st.path === 'partner' && st.interrupted ? 0.5 + 0.5 * Math.sin(t * 12) : 0 },
+      tank: { level: vis.tank, sub: `${Math.round(bal)} 萬`, low: st.interrupted && bal <= 0.001 && r.gap > 0 },
+      buckets: [
+        { label: sell ? '房租' : '房貸', amount: `${fmt(sell ? p.rent : p.mort)} 萬／月`, level: vis.levels[0], glow: vis.glow[0] },
+        { label: '孩子教育', amount: `${fmt(p.edu)} 萬／月`, level: vis.levels[1], glow: vis.glow[1] },
+        { label: '日常生活', amount: `${fmt(p.life)} 萬／月`, level: vis.levels[2], glow: vis.glow[2] }
+      ],
+      dens: { main: readTrack(TR.main), part: readTrack(TR.part), tank: readTrack(TR.tank), out: readTrack(TR.out) }
+    }, t);
+
+    // 標題
+    let head = '一個家，\n靠收入在流動';
+    if (st.interrupted) head = { savings: '收入停了，\n先用存款補', sell: '收入停了，\n把房子賣掉', partner: '收入停了，\n另一半多扛', buffer: '收入停了，\n先由緩衝接住' }[st.path];
+    head.split('\n').forEach((ln, i) => FF.text(ctx, ln, FF.L.HEAD.x, FF.L.HEAD.y + i * 92,
+      { size: 76, weight: 900, serif: true, color: i === 1 && st.interrupted ? (st.path === 'buffer' ? COL.blue : COL.verm) : COL.ink }));
+
+    // 數字列
+    const mInt = Math.floor(m);
+    let I;
+    if (!st.interrupted) {
+      I = { l: ['月收入', `${fmt(r.inc)} 萬`], r: ['月支出', `${fmt(r.exp)} 萬`], cap: '點「主要收入」看看中斷後會怎樣', capColor: COL.mute };
+    } else if (r.gap <= 0) {
+      I = { l: ['每月缺口', '0 萬', COL.blue], r: ['存款', `${Math.round(bal)} 萬`], cap: '收入仍然足夠支出，存款不必動用' };
+    } else {
+      const out = bal <= 0.001;
+      I = {
+        l: ['每月缺口', `−${fmt(r.gap)} 萬`, COL.verm],
+        r: [covered ? '緩衝補缺口中' : '經過時間', `第 ${mInt} 個月`, out ? COL.verm : covered ? COL.blue : COL.ink],
+        cap: out ? `第 ${r.runway} 個月後，存款歸零` : covered ? '緩衝先補缺口，存款還沒動' : '存款正在補缺口',
+        capColor: out ? COL.verm : COL.ink
+      };
+    }
+    FF.info(ctx, I, 1);
+    FF.text(ctx, '虛構家庭與數字，僅為示意', 110, 1580, { size: 24, weight: 500, color: COL.mute, alpha: 0.85 });
+    FF.furniture(ctx, '圖解　收入中斷之後', '@timzz1208', 1);
+    FF.finish(ctx, t);
+
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- 操作台 ----------
+  function refreshPanel() {
+    const p = params();
+    IDS.forEach((id) => {
+      const o = document.querySelector(`[data-o="${id}"]`);
+      if (o) o.textContent = fmt(p[id]) + (UNIT[id] || ' 萬');
+    });
+    const paths = $('paths');
+    paths.setAttribute('aria-disabled', String(!st.interrupted));
+    paths.querySelectorAll('.path').forEach((b) => {
+      b.setAttribute('aria-checked', String(b.dataset.p === st.path));
+      b.disabled = !st.interrupted;
+    });
+    document.querySelectorAll('[data-for]').forEach((f) => (f.hidden = !(st.interrupted && f.dataset.for === st.path)));
+    $('cut').setAttribute('aria-pressed', String(st.interrupted));
+    $('cutLabel').textContent = st.interrupted ? '恢復主要收入' : '讓主要收入中斷';
+
+    const r = sim(p, st.path, st.interrupted);
+    let msg;
+    if (!st.interrupted) {
+      const base = sim(p, 'savings', true);
+      msg = `目前每月收入 ${fmt(r.inc)} 萬、支出 ${fmt(r.exp)} 萬。如果主要收入中斷，每月會少 ${fmt(base.gap)} 萬。`;
+    } else if (r.gap <= 0) {
+      msg = '這組數字下，剩下的收入仍然足夠支出，存款不必動用。';
+    } else {
+      const rw = runwayText(r);
+      msg = {
+        savings: `每月缺口 ${fmt(r.gap)} 萬，存款大約撐 ${rw}。`,
+        sell: `改付房租後，每月缺口 ${fmt(r.gap)} 萬，存款撐 ${rw}。還要搬家，孩子可能要轉學。`,
+        partner: `另一半多賺 ${fmt(p.extra)} 萬後，缺口 ${fmt(r.gap)} 萬，存款撐 ${rw}。前提是另一半能長期兼職。`,
+        buffer: `緩衝先補 ${fmt(p.years)} 年缺口，存款先留著，合計大約撐 ${rw}。`
+      }[st.path];
+    }
+    $('result').textContent = msg;
+
+    const tb = $('compare').querySelector('tbody');
+    tb.innerHTML = '';
+    Object.keys(PATH_NAMES).forEach((k) => {
+      const rr = sim(p, k, true);
+      const tr = document.createElement('tr');
+      if (st.interrupted && k === st.path) tr.className = 'on';
+      const th = document.createElement('th'); th.textContent = PATH_NAMES[k];
+      const td = document.createElement('td'); td.textContent = `−${fmt(rr.gap)} 萬／${runwayText(rr)}`;
+      tr.append(th, td); tb.append(tr);
+    });
+  }
+
+  function replay() { st.playStart = performance.now() / 1000; }
+  function toggleCut() { st.interrupted = !st.interrupted; if (st.interrupted) replay(); refreshPanel(); }
+
+  $('cut').addEventListener('click', toggleCut);
+  $('paths').addEventListener('click', (e) => {
+    const b = e.target.closest('.path');
+    if (!b || !st.interrupted) return;
+    st.path = b.dataset.p; replay(); refreshPanel();
+  });
+  $('paths').addEventListener('keydown', (e) => {
+    if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(e.key) || !st.interrupted) return;
+    const keysArr = Object.keys(PATH_NAMES);
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1;
+    st.path = keysArr[(keysArr.indexOf(st.path) + d + keysArr.length) % keysArr.length];
+    replay(); refreshPanel();
+    $('paths').querySelector(`[data-p="${st.path}"]`).focus();
+    e.preventDefault();
+  });
+  IDS.forEach((id) => $(id).addEventListener('input', () => { refreshPanel(); if (st.interrupted) replay(); }));
+  $('replay').addEventListener('click', () => { if (!st.interrupted) toggleCut(); else replay(); });
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * FF.W, y = (e.clientY - rect.top) / rect.height * FF.H;
+    if (Math.hypot(x - FF.L.MAIN.x, y - FF.L.MAIN.y) < 110) toggleCut();
+  });
+
+  refreshPanel();
+  requestAnimationFrame(frame);
+})();
+</script>
