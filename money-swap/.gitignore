@@ -1,0 +1,5 @@
+# 歌曲有版權：只在本機用來對拍與預覽，不進 repo
+*.mp3
+song*.wav
+*-with-song*.mp4
+preview*.mp4
