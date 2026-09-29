@@ -1,5 +1,5 @@
 // 逐格輸出 video.html → MP4（1080×1920, 60fps, H.264）
-// 用法：node render.js [--frames 0,5,12.5 輸出單格 PNG] [--fps 60] [--font 路徑]
+// 用法：node render.js [--frames 0,5,12.5 輸出單格 PNG] [--fps 60] [--font 黑體路徑] [--serif 宋體路徑]
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -9,6 +9,7 @@ const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const FPS = +opt('--fps', 60);
 const FONT = opt('--font', process.env.FONT_TTF || '');
+const SERIF = opt('--serif', process.env.SERIF_TTF || '');
 const OUT = opt('--out', path.join(__dirname, 'family-flow-ig.mp4'));
 const FFMPEG = opt('--ffmpeg', process.env.FFMPEG || 'ffmpeg');
 const stills = opt('--frames', null);
@@ -21,8 +22,12 @@ const stills = opt('--frames', null);
   if (FONT) {
     await page.addStyleTag({ content: `@font-face{font-family:"Noto Sans TC";src:url("file://${FONT}");font-weight:100 900;}` });
   }
+  if (SERIF) {
+    await page.addStyleTag({ content: `@font-face{font-family:"Noto Serif TC";src:url("file://${SERIF}");font-weight:100 900;}` });
+  }
   await page.evaluate(async () => {
-    for (const w of [500, 600, 800, 900]) await document.fonts.load(`${w} 40px "Noto Sans TC"`, '家庭責任');
+    for (const w of [500, 600, 700, 800, 900]) await document.fonts.load(`${w} 40px "Noto Sans TC"`, '家庭責任');
+    await document.fonts.load('900 40px "Noto Serif TC"', '家庭責任');
   });
   const canvas = await page.$('canvas');
 

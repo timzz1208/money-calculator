@@ -10,24 +10,31 @@
 | `engine.js` | 兩者共用的繪圖引擎（粒子流、水桶、節點） |
 | `render.js` | 逐格輸出 `video.html` → MP4 |
 
+## 視覺方向：紙與墨
+
+有纖維的紙底、墨黑主色、朱紅代表家庭責任；群青只留給「緩衝」，最後才第一次出現。
+不用發光，改用網點（水桶）、木刻斜線（存款）、朱紅印章（家）與定格顆粒做質感。
+標題用思源宋體 Black，標籤用思源黑體。
+
 ## 影片分鏡
 
 | 秒數 | 畫面 |
 |---|---|
-| 0–3 | 兩條收入流進「家」，再注滿房貸、教育、生活三個水桶 |
-| 3–7.4 | 主要收入中斷，水流停下，三個水桶亮起、水位下降，缺口數到 −4 萬 |
+| 0–0.9 | 封面即鉤子：「如果明天停薪，你家撐得了幾個月？」水流已經在跑 |
+| 0.9–3.4 | 主要收入被朱紅斜線劃斷、墨點噴散、畫面一震；「−40,000 元」砸進畫面 |
+| 3.4–7.4 | 「收入停了，責任不會跟著停。」三個水桶轉朱紅、水位下降 |
 | 7.4–20.2 | 三個選擇依序被點開：動用存款（15 個月歸零）、賣掉房子（多了房租，要搬家）、另一半多扛（缺口變小，但要長期兼職） |
-| 20.2–25.6 | 「保障緩衝」節點補上中斷的位置，水流重新接上，存款留著 |
+| 20.2–25.6 | 群青的「保障緩衝」補上中斷的位置，水流重新接上，存款留著 |
 | 25.6–30 | 結語「先說清楚要守住的生活，再確認正式保障方向。」＋ @timzz1208 ＋ 示意聲明 |
 
 ## 重新輸出影片
 
-需要 Node + Playwright（Chromium）與含 libx264 的 ffmpeg，以及 Noto Sans TC 字體檔：
+需要 Node + Playwright（Chromium）與含 libx264 的 ffmpeg，以及 Noto Sans TC、Noto Serif TC 字體檔：
 
 ```bash
-FONT_TTF=/path/to/NotoSansTC.ttf FFMPEG=/path/to/ffmpeg node render.js
+FONT_TTF=/path/to/NotoSansTC.ttf SERIF_TTF=/path/to/NotoSerifTC.ttf FFMPEG=/path/to/ffmpeg node render.js
 # 只輸出幾張定格檢查：
-FONT_TTF=/path/to/NotoSansTC.ttf node render.js --frames 1.5,10.5,28.5
+FONT_TTF=/path/to/NotoSansTC.ttf SERIF_TTF=/path/to/NotoSerifTC.ttf node render.js --frames 1.5,10.5,28.5
 ```
 
 畫面完全由時間決定（沒有累積狀態），所以同一秒永遠輸出同一格。

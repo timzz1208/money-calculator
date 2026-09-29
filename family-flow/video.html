@@ -5,19 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>家庭責任流｜30 秒影片</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;600;800;900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;600;700;800&family=Noto+Serif+TC:wght@900&display=swap">
 <style>
-  :root { color-scheme: dark; --bg: #05080f; --ink: #F4EFE6; --mute: #8A97B0; --amber: #F5A742; }
+  :root { color-scheme: light; --bg: #CFCAC0; --ink: #1D1F25; --mute: #55565C; --verm: #D8432A; }
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font-family: "Noto Sans TC", sans-serif; }
   body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding-block: 12px; box-sizing: border-box; }
-  canvas { height: calc(100% - 64px); max-width: calc(100vw - 32px); aspect-ratio: 9 / 16; object-fit: contain; border-radius: 12px; }
+  canvas { height: calc(100% - 64px); max-width: calc(100vw - 32px); aspect-ratio: 9 / 16; object-fit: contain; border-radius: 8px; box-shadow: 0 10px 30px rgba(29,31,37,.25); }
   .bar { display: flex; gap: 10px; align-items: center; width: min(560px, calc(100vw - 32px)); }
-  button { font: inherit; font-weight: 700; background: #15244A; color: var(--ink); border: 1px solid #2a3b66; border-radius: 999px; padding: 6px 14px; cursor: pointer; }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
-  input[type=range] { flex: 1; accent-color: var(--amber); }
+  button { font: inherit; font-weight: 700; background: var(--ink); color: #E7E3DA; border: 0; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--verm); outline-offset: 2px; }
+  input[type=range] { flex: 1; accent-color: var(--verm); }
   output { font-variant-numeric: tabular-nums; color: var(--mute); min-width: 4.5em; text-align: right; }
   body.render { padding: 0; display: block; }
-  body.render canvas { width: 1080px; height: 1920px; max-width: none; border-radius: 0; display: block; }
+  body.render canvas { width: 1080px; height: 1920px; max-width: none; border-radius: 0; box-shadow: none; display: block; }
   body.render .bar { display: none; }
 </style>
 </head>
@@ -33,28 +33,27 @@
 <script>
 (function () {
   'use strict';
-  const { COL, keys, seg, clamp } = FF;
+  const { COL, keys, seg, clamp, easeBack } = FF;
   const DURATION = 30;
   const ctx = document.getElementById('stage').getContext('2d');
 
   // ---------- 時間軸 ----------
+  const CUT = 0.9;        // 主要收入被劃斷
+  const SLAM = 1.1;       // −40,000 砸進畫面
   const CHOICES = [
     { s: 8.2, label: '動用存款' },
     { s: 12.2, label: '賣掉房子' },
     { s: 16.2, label: '另一半多扛' }
   ];
-  const PILL = { y: 420, h: 72, w: 250, xs: [110, 384, 658] };
+  const PILL = { y: 430, h: 76, w: 262, xs: [110, 409, 708] };
 
   const HEADLINES = [
-    [0, 3.0, '一個家，\n靠收入在流動'],
-    [3.0, 5.0, '如果主要收入，\n突然停了？'],
-    [5.0, 7.4, '收入停了，\n責任不會跟著停'],
-    [7.4, 20.2, '這時，家裡\n只能選一條路'],
-    [20.2, 25.6, '如果事先，\n準備好一個緩衝？']
+    [3.4, 7.4, [['收入停了，', COL.ink], ['責任不會跟著停。', COL.verm]]],
+    [7.4, 20.2, [['這時，家裡', COL.ink], ['只能選一條路。', COL.ink]]],
+    [20.2, 25.6, [['如果事先，', COL.ink], ['準備好一個緩衝？', COL.blue]]]
   ];
 
-  // 粒子密度（依粒子出生時間）
-  const mainD = (ts) => (ts < 3.4 ? 1 : 0);
+  const mainD = (ts) => (ts < CUT ? 1 : 0);
   const bufD = (ts) => (ts > 21.7 ? 1 : 0);
   const PART_K = [[0, 0.6], [17.0, 0.6], [17.8, 0.9], [20.2, 0.9], [20.6, 0.6]];
   const partD = (ts) => keys(ts, PART_K);
@@ -65,10 +64,10 @@
     return clamp((mainD(s) * 5 + bufD(s) * 4 + (partD(s) / 0.6) * 3 + tankD(s) * 4) / 7);
   };
 
-  const LEVEL_K = [[0, .1], [2.6, .8], [3.8, .8], [7.0, .5], [8.9, .5], [9.7, .8], [11.5, .8], [12.1, .4], [12.5, .5],
+  const LEVEL_K = [[0, .8], [1.6, .8], [4.6, .5], [8.9, .5], [9.7, .8], [11.5, .8], [12.1, .4], [12.5, .5],
     [13.8, .5], [14.6, .6], [16.2, .6], [16.5, .5], [17.4, .5], [18.4, .6], [20.2, .6], [20.6, .5], [21.9, .5], [23.6, .8], [30, .8]];
   const B0_SELL_K = [[12.2, .4], [12.5, .5], [13.0, .5], [13.6, 0], [13.8, 0], [14.6, .5], [16.2, .5]];
-  const GLOW_K = [[0, 0], [4.4, 0], [5.0, 1], [7.6, 1], [8.4, .5], [9.7, 0], [11.5, 0], [12.0, 1], [12.4, .5],
+  const PRESS_K = [[0, 0], [1.3, 0], [1.9, 1], [7.6, 1], [8.4, .5], [9.7, 0], [11.5, 0], [12.0, 1], [12.4, .5],
     [14.6, .35], [20.2, .35], [20.6, .5], [22.2, .5], [23.6, 0]];
 
   function tankLevel(t) {
@@ -76,72 +75,97 @@
     if (t < 12.2) return 1 - clamp((t - 8.9) / 2.5);
     return seg(t, 12.2, 12.6);
   }
-
   function fmtGap(n) { return n > 3.995 || Math.abs(n - Math.round(n)) < 0.005 ? `−${Math.round(n)} 萬` : `−${n.toFixed(1)} 萬`; }
 
   const INFO = [
-    [0.6, 3.6, () => ({ l: ['月收入', '8 萬'], r: ['月支出', '7 萬'], cap: '房貸 2.8 ＋ 教育 1.2 ＋ 生活 3（萬／月）', capColor: COL.mute })],
-    [3.6, 8.2, (t) => ({
-      l: ['每月缺口', t < 4.3 ? '−0 萬' : fmtGap(4 * seg(t, 4.3, 5.3)), COL.amber],
-      r: ['剩下的收入', '3 萬'],
-      cap: '支出 7 萬 − 收入 3 萬', capAlpha: seg(t, 5.3, 5.8)
+    [0, 8.2, (t) => ({
+      l: t < CUT + 0.2 ? ['月收入', '8 萬'] : ['每月缺口', '−4 萬', COL.verm],
+      r: ['月支出', '7 萬'],
+      cap: '支出 7 萬 − 另一半收入 3 萬 ＝ 缺口 4 萬', capAlpha: seg(t, 3.6, 4.1)
     })],
     [8.2, 12.2, (t) => {
       const m = Math.floor(15 * clamp((t - 8.9) / 2.5));
       return {
-        l: ['每月缺口', '−4 萬', COL.amber],
-        r: ['存款撐到', `第 ${m} 個月`, m >= 15 ? COL.red : COL.ink],
-        cap: '15 個月後，存款歸零', capColor: COL.red, capAlpha: seg(t, 11.4, 11.8)
+        l: ['每月缺口', '−4 萬', COL.verm],
+        r: ['存款撐到', `第 ${m} 個月`, m >= 15 ? COL.verm : COL.ink],
+        cap: '15 個月後，存款歸零。', capColor: COL.verm, capAlpha: seg(t, 11.4, 11.8)
       };
     }],
     [12.2, 16.2, (t) => ({
-      l: ['每月缺口', fmtGap(4 - seg(t, 13.8, 14.6)), COL.amber],
+      l: ['每月缺口', fmtGap(4 - seg(t, 13.8, 14.6)), COL.verm],
       r: ['新增房租', '1.8 萬'],
-      cap: '少了房貸，也少了家：搬家、孩子可能轉學', capAlpha: seg(t, 14.6, 15.0)
+      cap: '少了房貸，也少了家：搬家、孩子可能轉學。', capAlpha: seg(t, 14.6, 15.0)
     })],
     [16.2, 20.2, (t) => ({
-      l: ['每月缺口', fmtGap(4 - seg(t, 17.4, 18.2)), COL.amber],
+      l: ['每月缺口', fmtGap(4 - seg(t, 17.4, 18.2)), COL.verm],
       r: ['另一半收入', t < 17.6 ? '3 萬' : '4 萬'],
-      cap: '缺口變小，但另一半得長期兼職', capAlpha: seg(t, 18.2, 18.6)
+      cap: '缺口變小，但另一半得長期兼職。', capAlpha: seg(t, 18.2, 18.6)
     })],
     [20.2, 25.6, (t) => ({
-      l: ['每月缺口', t < 21.9 ? '−4 萬' : '有緩衝補上', t < 21.9 ? COL.amber : COL.blue],
-      r: ['存款', '60 萬 留著'],
-      cap: '緩衝爭取時間，家人不必被迫做選擇', capAlpha: seg(t, 23.0, 23.4)
+      l: ['每月缺口', t < 21.9 ? '−4 萬' : '有緩衝補', t < 21.9 ? COL.verm : COL.blue],
+      r: ['存款', '60 萬'],
+      cap: '緩衝爭取的是時間，家人不必被迫做選擇。', capAlpha: seg(t, 23.0, 23.4)
     })]
   ];
 
   function mainState(t) {
-    if (t < 3.4) return { color: COL.income, label: '主要收入', sub: '5 萬／月', glow: 0.25, alpha: 1 };
+    if (t < CUT) return { mode: 'on', label: '主要收入', sub: '5 萬／月' };
     if (t < 20.8) {
-      const flick = t < 4.0 ? (Math.sin(t * 60) > 0 ? 1 : 0.35) : 1;
       const fade = 1 - seg(t, 20.2, 20.8);
-      return {
-        color: t < 4.4 ? COL.red : '#4A5672', glow: t < 4.4 ? 0.8 * flick : 0,
-        alpha: flick * fade, label: '主要收入', sub: '中斷', subColor: COL.red,
-        pipeColor: COL.red, pipeAlpha: 0.35, dash: [8, 14]
-      };
+      return { mode: 'cut', label: '主要收入', sub: '中斷', subColor: COL.verm, alpha: fade };
     }
-    const k = seg(t, 20.8, 21.5);
-    return {
-      color: COL.blue, label: '保障緩衝', sub: '事先準備', subColor: COL.blue,
-      alpha: k, dy: -120 * (1 - k), glow: 0.7, ring: t > 21.5 && t < 22.4 ? seg(t, 21.5, 22.4) : 0,
-      pipeColor: COL.blue, pipeAlpha: 0.3 * k
+    const k = FF.easeOut(clamp((t - 20.8) / 0.6));
+    return { mode: 'buffer', label: '保障緩衝', sub: '事先準備', subColor: COL.blue, alpha: k, dy: -110 * (1 - k), ring: t > 21.4 && t < 22.4 ? seg(t, 21.4, 22.4) : 0 };
+  }
+
+  // 劃斷與砸落時的震動（固定公式，可重現）
+  function shake(t) {
+    let x = 0, y = 0;
+    const hit = (t0, amp, dur) => {
+      const a = t - t0;
+      if (a < 0 || a > dur) return;
+      const k = amp * Math.exp(-a * 14);
+      x += Math.sin(a * 95) * k; y += Math.cos(a * 71) * k;
     };
+    hit(CUT, 14, 0.5);
+    hit(SLAM + 0.2, 10, 0.5);
+    return { x, y };
+  }
+
+  function drawHook(t) {
+    // 0 秒就是封面：大字提問
+    if (t < SLAM + 0.05) {
+      const out = 1 - seg(t, SLAM - 0.12, SLAM + 0.05);
+      FF.text(ctx, '如果明天停薪，', 110, 320, { size: 86, weight: 900, serif: true, alpha: out });
+      FF.text(ctx, '你家撐得了幾個月？', 110, 432, { size: 86, weight: 900, serif: true, color: COL.verm, alpha: out });
+    }
+    // −40,000 砸下來
+    if (t >= SLAM && t < 3.4) {
+      const k = clamp((t - SLAM) / 0.26);
+      const sc = 1 + 0.9 * (1 - easeBack(k));
+      const out = 1 - seg(t, 3.1, 3.4);
+      FF.text(ctx, '收入停掉後，林家每個月少', 110, 262, { size: 32, weight: 700, color: COL.inkSoft, alpha: seg(t, SLAM + 0.25, SLAM + 0.5) * out, ls: 2 });
+      ctx.save();
+      ctx.translate(110, 440);
+      ctx.scale(sc, sc);
+      ctx.globalAlpha = clamp(k * 3) * out;
+      FF.text(ctx, '−40,000', 0, 0, { size: 188, weight: 900, serif: true, color: COL.verm });
+      const w = FF.measure(ctx, '−40,000', { size: 188, weight: 900, serif: true });
+      FF.text(ctx, '元', w + 14, -6, { size: 56, weight: 900, serif: true, color: COL.ink });
+      ctx.restore();
+    }
   }
 
   function renderAt(t) {
     ctx.save();
-    FF.background(ctx, t);
+    FF.background(ctx);
+    const sh = shake(t);
+    ctx.translate(sh.x, sh.y);
 
-    // ---------- 家庭網絡 ----------
     const inSell = t >= 12.2 && t < 16.2;
     const buckets = ['房貸', '孩子教育', '日常生活'].map((label, i) => {
-      const tt = t < 8 ? t - i * 0.3 : t;
-      return {
-        label, amount: ['2.8 萬／月', '1.2 萬／月', '3 萬／月'][i],
-        level: keys(t, LEVEL_K), glow: keys(tt, GLOW_K), alpha: 1
-      };
+      const tt = t < 8 ? t - i * 0.25 : t;
+      return { label, amount: ['2.8 萬／月', '1.2 萬／月', '3 萬／月'][i], level: keys(t, LEVEL_K), glow: keys(tt, PRESS_K), alpha: 1 };
     });
     if (inSell) {
       buckets[0].level = keys(t, B0_SELL_K);
@@ -151,65 +175,73 @@
 
     const inPartner = t >= 16.2 && t < 20.2;
     const tl = tankLevel(t);
-    const S = {
-      alpha: 1 - 0.93 * seg(t, 25.6, 26.4),
+    FF.network(ctx, {
+      alpha: 1 - 0.97 * seg(t, 25.6, 26.4),
       main: mainState(t),
-      mainStreamColor: t > 20 ? COL.blue : COL.income,
       part: {
         sub: inPartner && t >= 17.6 ? '4 萬／月' : '3 萬／月',
-        subColor: inPartner && t >= 17.6 ? COL.amber : null,
-        glow: inPartner && t >= 17.0 ? 0.45 + 0.35 * Math.sin(t * 10) : 0
+        subColor: inPartner && t >= 17.6 ? COL.verm : null,
+        pulse: inPartner && t >= 17.0 ? 0.5 + 0.5 * Math.sin(t * 12) : 0
       },
       tank: { level: tl, sub: `${Math.round(60 * tl)} 萬`, low: tl < 0.15 },
       buckets,
       dens: { main: (ts) => mainD(ts) || bufD(ts), part: partD, tank: tankD, out: outD }
-    };
-    FF.network(ctx, S, t);
+    }, t);
 
-    // ---------- 標題 ----------
-    for (const [a, b, s] of HEADLINES) {
+    // 劃斷處噴出的墨點
+    const sp = FF.bez(FF.PATHS.main, 0.42);
+    FF.spray(ctx, sp.x, sp.y, CUT, t, COL.ink, 46, 9);
+    FF.spray(ctx, sp.x, sp.y, CUT + 0.03, t, COL.verm, 18, 19);
+    if (t >= CUT && t < 20.2) FF.slash(ctx, sp.x, sp.y, clamp((t - CUT) / 0.12) * 0.9);
+
+    drawHook(t);
+
+    for (const [a, b, lines] of HEADLINES) {
       if (t < a || t >= b) continue;
-      const fin = a === 0 ? 1 : seg(t, a, a + 0.35);
       const fout = 1 - seg(t, b - 0.25, b);
-      FF.text(ctx, s, FF.L.HEAD.x, FF.L.HEAD.y + 18 * (1 - fin), { size: 64, weight: 900, alpha: fin * fout, lh: 1.24 });
+      lines.forEach(([s, c], i) => {
+        const fin = seg(t, a + i * 0.12, a + 0.4 + i * 0.12);
+        FF.text(ctx, s, FF.L.HEAD.x, FF.L.HEAD.y + i * 92 + 20 * (1 - fin), { size: 76, weight: 900, serif: true, color: c, alpha: fin * fout });
+      });
     }
 
-    // ---------- 三個選擇 ----------
     const pillA = seg(t, 7.6, 8.0) * (1 - seg(t, 20.0, 20.4));
     if (pillA > 0) {
       CHOICES.forEach((c, i) => {
-        const act = seg(t, c.s + 0.35, c.s + 0.55) * (1 - seg(t, c.s + 3.8, c.s + 4.0));
-        FF.pill(ctx, PILL.xs[i], PILL.y, PILL.w, PILL.h, c.label, act, pillA);
+        const act = seg(t, c.s + 0.3, c.s + 0.45) * (1 - seg(t, c.s + 3.8, c.s + 4.0));
+        FF.pill(ctx, PILL.xs[i], PILL.y, PILL.w, PILL.h, c.label, act, pillA, i + 1);
       });
-      CHOICES.forEach((c, i) => FF.tap(ctx, PILL.xs[i] + PILL.w * 0.62, PILL.y + PILL.h * 0.6, (t - (c.s + 0.05)) / 0.7));
+      CHOICES.forEach((c, i) => FF.tap(ctx, PILL.xs[i] + PILL.w * 0.66, PILL.y + PILL.h * 0.62, (t - (c.s + 0.05)) / 0.7));
     }
 
-    // ---------- 數字列 ----------
     for (const [a, b, fn] of INFO) {
       if (t < a || t >= b) continue;
-      const al = seg(t, a, a + 0.3) * (1 - seg(t, b - 0.25, b));
+      const al = (a === 0 ? 1 : seg(t, a, a + 0.3)) * (1 - seg(t, b - 0.25, b));
       FF.info(ctx, fn(t), al);
     }
-    if (t < 25.6) FF.text(ctx, '虛構家庭與數字，僅為示意', 110, 1572, { size: 24, weight: 500, color: COL.mute, alpha: 0.85 * (1 - seg(t, 25.2, 25.6)) });
+    if (t < 25.6) FF.text(ctx, '虛構家庭與數字，僅為示意', 110, 1580, { size: 24, weight: 500, color: COL.mute, alpha: 1 - seg(t, 25.2, 25.6) });
+
+    FF.furniture(ctx, '圖解　收入中斷之後', '@timzz1208', 1 - seg(t, 25.4, 25.9));
 
     // ---------- 結尾 ----------
     if (t >= 25.8) {
-      const k = seg(t, 25.8, 26.5), dy = 24 * (1 - k);
-      const lines = [['先說清楚', COL.ink], ['要守住的生活，', COL.amber], ['再確認', COL.ink], ['正式保障方向。', COL.blue]];
+      const lines = [['先說清楚', COL.ink], ['要守住的生活，', COL.verm], ['再確認', COL.ink], ['正式保障方向。', COL.blue]];
       lines.forEach(([s, c], i) => {
-        const ki = seg(t, 25.8 + i * 0.18, 26.5 + i * 0.18);
-        FF.text(ctx, s, 110, 700 + i * 112 + 24 * (1 - ki), { size: 84, weight: 900, color: c, alpha: ki });
+        const ki = seg(t, 25.8 + i * 0.16, 26.4 + i * 0.16);
+        FF.text(ctx, s, 110, 660 + i * 120 + 26 * (1 - ki), { size: 92, weight: 900, serif: true, color: c, alpha: ki });
       });
       const k2 = seg(t, 26.9, 27.5);
       ctx.save();
-      ctx.globalAlpha = k2;
-      ctx.strokeStyle = 'rgba(244,239,230,0.25)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(110, 1135); ctx.lineTo(110 + 400 * k2, 1135); ctx.stroke();
+      ctx.fillStyle = COL.ink;
+      ctx.fillRect(110, 1150, 860 * k2, 3);
+      ctx.fillRect(110, 1157, 860 * k2, 1);
       ctx.restore();
-      FF.text(ctx, '@timzz1208', 110, 1210 + dy * 0, { size: 46, weight: 800, alpha: k2 });
-      FF.text(ctx, '虛構家庭與數字｜示意動畫\n不代表特定商品、核保結果或給付承諾', 110, 1280, { size: 28, weight: 500, color: COL.mute, alpha: k2, lh: 1.5 });
+      FF.stamp(ctx, 912, 1250, 96, '家', k2);
+      FF.text(ctx, '@timzz1208', 110, 1240, { size: 48, weight: 800, alpha: k2 });
+      FF.text(ctx, '虛構家庭與數字｜示意動畫\n不代表特定商品、核保結果或給付承諾', 110, 1310, { size: 27, weight: 500, color: COL.inkSoft, alpha: k2, lh: 1.55 });
     }
     ctx.restore();
+    FF.finish(ctx, t);
   }
 
   window.renderAt = renderAt;
@@ -223,8 +255,7 @@
   const scrub = document.getElementById('scrub');
   const out = document.getElementById('time');
   let t = 0, playing = true, last = performance.now();
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduce) { playing = false; t = 26.8; }
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { playing = false; t = 27.6; }
 
   function loop(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
@@ -239,8 +270,8 @@
   playBtn.addEventListener('click', () => { if (t >= DURATION) t = 0; playing = !playing; });
   document.getElementById('restart').addEventListener('click', () => { t = 0; playing = true; });
   scrub.addEventListener('input', () => { t = parseFloat(scrub.value); playing = false; });
-  document.fonts && document.fonts.ready.then(() => requestAnimationFrame(loop));
-  if (!document.fonts) requestAnimationFrame(loop);
+  const start = () => { last = performance.now(); requestAnimationFrame(loop); };
+  document.fonts ? document.fonts.ready.then(start) : start();
 })();
 </script>
 </body>
