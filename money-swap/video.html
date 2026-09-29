@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>錢在工作｜31 秒影片</title>
+<style>
+  :root { color-scheme: dark; --bg: #07090d; --ink: #E9E2D3; --verm: #D8432A; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font-family: "Noto Sans TC", sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding-block: 12px; box-sizing: border-box; }
+  canvas#stage { height: calc(100% - 64px); max-width: calc(100vw - 32px); aspect-ratio: 9 / 16; object-fit: contain; }
+  .bar { display: flex; gap: 10px; align-items: center; width: min(560px, calc(100vw - 32px)); }
+  button { font: inherit; font-weight: 700; background: #1b2029; color: var(--ink); border: 0; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+  input[type=range] { flex: 1; accent-color: var(--verm); }
+  output { font-variant-numeric: tabular-nums; min-width: 4.5em; text-align: right; opacity: .7; }
+  body.render { padding: 0; display: block; }
+  body.render canvas#stage { width: auto; height: auto; max-width: none; display: block; }
+  body.render .bar { display: none; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="bar">
+  <button id="play" type="button">暫停</button>
+  <input id="scrub" type="range" min="0" max="31.2" step="0.01" value="0" aria-label="時間軸">
+  <output id="time">0.0 秒</output>
+</div>
+<script src="beats.js"></script>
+<script src="timeline.js"></script>
+<script>
+(function () {
+  'use strict';
+  const W = 1080, H = 1920;
+  const q = new URLSearchParams(location.search);
+  const OUT_SCALE = +(q.get('scale') || 1);           // 預覽可用 0.5
+  const MB = +(q.get('mb') || 1);                      // 動態模糊子格數
+  const SHUTTER = 1 / 60;                              // 30fps 時 180° 快門
+  const B = window.BEATS, T = window.TL;
+  const SERIF = '"Noto Serif TC","Songti TC",serif';
+  const SANS = '"Noto Sans TC","PingFang TC",sans-serif';
+  const C = { bone: '#E3DACA', ink: '#1a1714', verm: '#C9391F', vermHi: '#E2512F', gold: '#E6B35A', bg0: '#06080b', bg1: '#0f141b', fog: '160,175,200' };
+
+  // ---------- 工具 ----------
+  const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeIn = (t) => t * t * t;
+  const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+  const easeIO = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const seg = (t, a, b) => easeIO(clamp((t - a) / (b - a)));
+  function hash(n, s) { let x = Math.imul(n | 0, 374761393) ^ Math.imul(s | 0, 668265263); x = Math.imul(x ^ (x >>> 13), 1274126177); x ^= x >>> 16; return (x >>> 0) / 4294967296; }
+  function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  function mk(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+  function keys(t, arr) {
+    if (t <= arr[0][0]) return arr[0][1];
+    for (let i = 1; i < arr.length; i++) if (t <= arr[i][0]) { const [a0, v0] = arr[i - 1], [a1, v1] = arr[i]; return lerp(v0, v1, easeIO((t - a0) / (a1 - a0 || 1))); }
+    return arr[arr.length - 1][1];
+  }
+  function bassAt(t) { const i = t * B.env_rate; const a = Math.floor(i); const f = i - a; const e = B.bass_env; return lerp(e[clamp(a, 0, e.length - 1)] || 0, e[clamp(a + 1, 0, e.length - 1)] || 0, f); }
+
+  // ---------- 石碑素材：有正式圖（tiles/*.png）就用，沒有就畫暫代版 ----------
+  const TILE_PX = 512;
+  const tileCache = {};
+  const tileImages = {};
+  function tileKey(ch, verm) { return (verm ? 'v_' : '') + ch.codePointAt(0).toString(16); }
+  function loadTileImages(list) {
+    return Promise.all(list.map(([ch, verm]) => new Promise((res) => {
+      const k = tileKey(ch, verm), im = new Image();
+      im.onload = () => { tileImages[k] = im; res(); };
+      im.onerror = () => res();
+      im.src = `tiles/${k}.png`;
+    })));
+  }
+  function placeholderTile(ch, verm) {
+    const c = mk(TILE_PX, TILE_PX), g = c.getContext('2d'), r = rng(ch.codePointAt(0) + (verm ? 7 : 0));
+    const P = TILE_PX, m = 10;
+    const grd = g.createLinearGradient(0, 0, P, P);
+    grd.addColorStop(0, '#d9cfbd'); grd.addColorStop(1, '#a89d8b');
+    g.fillStyle = grd; g.fillRect(m, m, P - 2 * m, P - 2 * m);
+    const img = g.getImageData(0, 0, P, P), d = img.data;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3]) { const n = (r() - 0.5) * 36; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+    g.putImageData(img, 0, 0);
+    g.strokeStyle = 'rgba(255,248,235,0.5)'; g.lineWidth = 6; g.strokeRect(m + 3, m + 3, P - 2 * m - 6, P - 2 * m - 6);
+    g.strokeStyle = 'rgba(40,32,24,0.6)'; g.lineWidth = 8; g.beginPath(); g.moveTo(P - m, m); g.lineTo(P - m, P - m); g.lineTo(m, P - m); g.stroke();
+    g.font = `900 ${P * 0.7}px ${SERIF}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = 'rgba(255,248,235,0.55)'; g.fillText(ch, P / 2 + 4, P / 2 + 26);
+    g.fillStyle = verm ? C.verm : '#2a241f'; g.fillText(ch, P / 2, P / 2 + 22);
+    return c;
+  }
+  function tileImg(ch, verm) {
+    const k = tileKey(ch, verm);
+    if (tileImages[k]) return tileImages[k];
+    return tileCache[k] || (tileCache[k] = placeholderTile(ch, verm));
+  }
+
+  // ---------- 裂痕（每塊石碑固定一組，依進度顯示） ----------
+  const crackCache = {};
+  function crackPaths(seed) {
+    if (crackCache[seed]) return crackCache[seed];
+    const r = rng(seed), paths = [];
+    const ox = (r() - 0.5) * 0.3, oy = (r() - 0.5) * 0.3;
+    for (let b = 0; b < 5; b++) {
+      let x = ox, y = oy, a = r() * Math.PI * 2;
+      const pts = [[x, y]];
+      for (let s = 0; s < 9; s++) { a += (r() - 0.5) * 1.1; const l = 0.04 + r() * 0.07; x += Math.cos(a) * l; y += Math.sin(a) * l; pts.push([x, y]); if (Math.abs(x) > 0.5 || Math.abs(y) > 0.5) break; }
+      paths.push(pts);
+    }
+    return (crackCache[seed] = paths);
+  }
+  function drawCracks(ctx, seed, size, p) {
+    if (p <= 0) return;
+    const paths = crackPaths(seed);
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const [pass, col, w] of [[0, 'rgba(255,240,220,0.35)', 3.5], [1, 'rgba(15,10,8,0.9)', 2.2]]) {
+      ctx.strokeStyle = col; ctx.lineWidth = w * size / 200;
+      for (const pts of paths) {
+        const n = Math.max(1, Math.floor(pts.length * p));
+        ctx.beginPath();
+        pts.slice(0, n + 1).forEach(([x, y], i) => { const X = x * size + (pass ? 0 : 1.5), Y = y * size + (pass ? 0 : 1.5); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // ---------- 碎片（Voronoi 切割） ----------
+  function clipPoly(poly, nx, ny, c) {       // 保留 nx*x+ny*y <= c 的部分
+    const out = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const da = nx * a[0] + ny * a[1] - c, db = nx * b[0] + ny * b[1] - c;
+      if (da <= 0) out.push(a);
+      if ((da <= 0) !== (db <= 0)) { const k = da / (da - db); out.push([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]); }
+    }
+    return out;
+  }
+  const shardCache = {};
+  function shards(seed, n) {
+    const key = seed + '_' + n;
+    if (shardCache[key]) return shardCache[key];
+    const r = rng(seed), pts = [];
+    for (let i = 0; i < n; i++) pts.push([(r() - 0.5) * 0.96, (r() - 0.5) * 0.96]);
+    const res = pts.map((p, i) => {
+      let poly = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
+      pts.forEach((q2, j) => {
+        if (i === j) return;
+        const nx = q2[0] - p[0], ny = q2[1] - p[1];
+        const c = (q2[0] * q2[0] + q2[1] * q2[1] - p[0] * p[0] - p[1] * p[1]) / 2;
+        poly = clipPoly(poly, nx, ny, c);
+      });
+      const cx = poly.reduce((s, v) => s + v[0], 0) / poly.length, cy = poly.reduce((s, v) => s + v[1], 0) / poly.length;
+      return { poly, cx, cy, r1: r(), r2: r(), r3: r() };
+    });
+    return (shardCache[key] = res);
+  }
+
+  // ---------- 衝擊清單 ----------
+  const IMPACTS = [];
+  function addImpact(t, level, x, y, extra) { IMPACTS.push(Object.assign({ t, level, x, y }, extra || {})); }
+  const groups = {};
+  T.HOOK.forEach((h) => { (groups[h.t] = groups[h.t] || []).push(h); });
+  Object.entries(groups).forEach(([t, arr]) => addImpact(+t, 2, arr.reduce((s, h) => s + h.x, 0) / arr.length, arr[0].y + T.S / 2, { w: arr.length }));
+  T.HOOK_CRACK.forEach((t) => addImpact(t, 1.5, 540, 930));
+  addImpact(T.HOOK_SHATTER, 3, 540, 930, { w: 4 });
+  T.WALL.forEach((w) => addImpact(w.t, 2, w.x, w.y + T.S / 2));
+  T.NUMBERS.forEach((n) => addImpact(n.t, 1.8, n.x, n.y + 50, { w: 3 }));
+  addImpact(T.SWAP.slam, 3, T.COLS[0], (T.ROW1 + T.ROW2) / 2 + 100, { w: 2 });
+  addImpact(T.WALL_FALL + 0.35, 2, 540, T.FLOOR_Y, { w: 4 });
+  T.FINAL.forEach((f) => addImpact(f.t, 2, f.x, f.y + f.size / 2));
+  addImpact(T.STAMP, 2, 780, 1330);
+  addImpact(T.END_CRACK, 2, 808, 1054);
+
+  // 各級震動參數：振幅（px）、衰減、頻率、旋轉（度）、推近
+  const LV = {
+    1: { amp: 6, dec: 16, f: 11, rot: 0.1, zoom: 0.006 },
+    1.5: { amp: 14, dec: 12, f: 10, rot: 0.25, zoom: 0.01 },
+    1.8: { amp: 20, dec: 11, f: 9, rot: 0.35, zoom: 0.014 },
+    2: { amp: 28, dec: 10, f: 9, rot: 0.45, zoom: 0.02 },
+    3: { amp: 62, dec: 6.5, f: 7, rot: 1.6, zoom: 0.06 },
+  };
+  function shake(t) {
+    let x = 0, y = 0, rot = 0, zoom = 0;
+    const hit = (t0, P, s, seed) => {
+      const dt = t - t0;
+      if (dt < 0 || dt > 1.2) return;
+      const e = Math.exp(-dt * P.dec) * s;
+      const ph = hash(seed, 3) * 6.28;
+      y += Math.sin(dt * P.f * 6.283) * P.amp * e;                       // 往下砸再彈回
+      x += Math.sin(dt * P.f * 1.7 * 6.283 + ph) * P.amp * 0.35 * e;
+      rot += Math.sin(dt * P.f * 0.8 * 6.283 + ph) * P.rot * e;
+      zoom += P.zoom * Math.exp(-dt * P.dec * 1.3) * s;
+    };
+    B.beats.forEach((b, i) => hit(b.t, LV[1], 0.4 + 0.8 * b.strength, i));
+    IMPACTS.forEach((m, i) => hit(m.t, LV[m.level], 1, 100 + i));
+    // 互換抬起時持續的低頻隆隆
+    if (t > T.SWAP.lift && t < T.SWAP.slam) {
+      const k = seg(t, T.SWAP.lift, T.SWAP.hang) * (t < T.SWAP.hang ? 1 : 0.4);
+      x += Math.sin(t * 61) * 5 * k; y += Math.sin(t * 47) * 5 * k;
+    }
+    const e = bassAt(t);
+    x += Math.sin(t * 90) * 1.6 * e; y += Math.cos(t * 77) * 1.6 * e;
+    return { x, y, rot: rot * Math.PI / 180, zoom };
+  }
+
+  // ---------- 鏡頭基礎運動 ----------
+  const CAM = {
+    zoom: [[0, 1.0], [4.0, 1.05], [4.3, 1.0], [12, 1.06], [19.4, 1.08], [20.9, 1.22], [21.45, 1.22], [21.7, 1.02], [25.2, 1.07], [25.6, 1.0], [28.6, 1.04], [31.2, 1.08]],
+    cx: [[0, 540], [19.4, 540], [20.9, 330], [21.45, 330], [22.2, 460], [25.2, 500], [25.6, 540], [31.2, 540]],
+    cy: [[0, 930], [4.0, 930], [12, 940], [19.4, 930], [20.9, 928], [22.2, 920], [25.6, 930], [31.2, 960]],
+    rot: [[0, 0], [4.0, 0], [6, -1.2], [12, 1.0], [16, -1.0], [19.4, 0.6], [21.45, -1.5], [23, 0.8], [25.6, 0], [31.2, -0.6]],
+  };
+
+  // ---------- 背景 ----------
+  let bgFloor = null, grainTiles = null;
+  function buildFloor() {
+    const c = mk(W, 900), g = c.getContext('2d'), r = rng(5);
+    const grd = g.createLinearGradient(0, 0, 0, 900);
+    grd.addColorStop(0, '#1a1e24'); grd.addColorStop(1, '#0a0c10');
+    g.fillStyle = grd; g.fillRect(0, 0, W, 900);
+    const img = g.getImageData(0, 0, W, 900), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const n = (r() - 0.5) * 18; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+    g.putImageData(img, 0, 0);
+    g.strokeStyle = 'rgba(0,0,0,0.55)'; g.lineWidth = 2;
+    const vx = 540;                                              // 地板透視線往畫面中央收
+    for (let i = -8; i <= 8; i++) { g.beginPath(); g.moveTo(vx + i * 40, 0); g.lineTo(vx + i * 240, 900); g.stroke(); }
+    for (let k = 1; k < 9; k++) { const y = 900 * Math.pow(k / 9, 1.7); g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 1.5;
+    for (let k = 0; k < 14; k++) { let x = r() * W, y = r() * 900; g.beginPath(); g.moveTo(x, y); for (let s = 0; s < 10; s++) { x += (r() - 0.5) * 70; y += (r() - 0.5) * 50; g.lineTo(x, y); } g.stroke(); }
+    return c;
+  }
+  function buildGrain(seed) {
+    const c = mk(W / 2, H / 2), g = c.getContext('2d'), r = rng(seed), img = g.createImageData(W / 2, H / 2), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const on = r() < 0.5; d[i] = d[i + 1] = d[i + 2] = on ? 255 : 0; d[i + 3] = r() * 26; }
+    g.putImageData(img, 0, 0); return c;
+  }
+  function background(ctx, t) {
+    if (!bgFloor) bgFloor = buildFloor();
+    const grd = ctx.createLinearGradient(0, 0, 0, H);
+    grd.addColorStop(0, C.bg0); grd.addColorStop(0.55, C.bg1); grd.addColorStop(1, C.bg0);
+    ctx.fillStyle = grd; ctx.fillRect(-200, -200, W + 400, H + 400);
+    // 光束
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    [[-160, 0.3, 320, 0], [280, 0.24, 240, 1], [640, 0.18, 360, 2]].forEach(([x, ang, w, i]) => {
+      const sway = Math.sin(t * 0.3 + i * 2) * 0.03;
+      ctx.save(); ctx.translate(x + 200, -150); ctx.rotate(ang + sway);
+      const gr = ctx.createLinearGradient(0, 0, 0, 1700);
+      gr.addColorStop(0, 'rgba(255,236,210,0.055)'); gr.addColorStop(1, 'rgba(255,236,210,0)');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.moveTo(-w * 0.3, 0); ctx.lineTo(w * 0.3, 0); ctx.lineTo(w, 1700); ctx.lineTo(-w, 1700); ctx.fill();
+      ctx.restore();
+    });
+    ctx.restore();
+    // 地面
+    ctx.drawImage(bgFloor, 0, T.FLOOR_Y - 20);
+    const fg = ctx.createLinearGradient(0, T.FLOOR_Y - 40, 0, T.FLOOR_Y + 160);
+    fg.addColorStop(0, 'rgba(' + C.fog + ',0.10)'); fg.addColorStop(1, 'rgba(' + C.fog + ',0)');
+    ctx.fillStyle = fg; ctx.fillRect(-200, T.FLOOR_Y - 40, W + 400, 200);
+    // 霧
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 5; i++) {
+      const y = 1000 + i * 70, x = ((t * (8 + i * 4) + i * 300) % 1600) - 300;
+      const gr = ctx.createRadialGradient(x, y, 0, x, y, 420);
+      gr.addColorStop(0, 'rgba(' + C.fog + ',0.045)'); gr.addColorStop(1, 'rgba(' + C.fog + ',0)');
+      ctx.fillStyle = gr; ctx.fillRect(x - 420, y - 420, 840, 840);
+    }
+    ctx.restore();
+  }
+  function motes(ctx, t) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 90; i++) {
+      const sp = 6 + hash(i, 2) * 14;
+      const x = (hash(i, 1) * W + Math.sin(t * 0.4 + i) * 20) % W;
+      const y = ((hash(i, 3) * H - t * sp) % H + H) % H;
+      const warm = hash(i, 5) < 0.18;
+      ctx.fillStyle = warm ? 'rgba(255,150,80,0.55)' : 'rgba(210,215,225,0.28)';
+      const r = 1 + hash(i, 4) * 2.2;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ---------- 揚塵與碎石 ----------
+  function dust(ctx, t, m, i) {
+    const dt = t - m.t;
+    if (dt < 0 || dt > 1.6) return;
+    const n = m.level >= 3 ? 90 : m.level >= 2 ? 36 : 14;
+    const spread = (m.w || 1) * 110;
+    ctx.save();
+    for (let k = 0; k < n; k++) {
+      const s = i * 131 + k;
+      const dir = hash(s, 1) < 0.5 ? -1 : 1;
+      const v = (120 + hash(s, 2) * (m.level >= 3 ? 900 : 420));
+      const drag = 1 - Math.exp(-dt * 3.2);
+      const x = m.x + (hash(s, 3) - 0.5) * spread + dir * v * drag / 3.2;
+      const y = m.y - (hash(s, 4) * 180 + 40) * drag - 10 + 30 * dt * dt;
+      const a = clamp(1 - dt / 1.6) * (0.25 + hash(s, 5) * 0.35);
+      const r = 6 + hash(s, 6) * 22 * (1 + dt);
+      const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, `rgba(190,182,168,${a})`); gr.addColorStop(1, 'rgba(190,182,168,0)');
+      ctx.fillStyle = gr; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // 碎石
+    const nc = m.level >= 3 ? 26 : m.level >= 2 ? 9 : 0;
+    ctx.fillStyle = '#2a2622';
+    for (let k = 0; k < nc; k++) {
+      const s = i * 977 + k;
+      const vx = (hash(s, 1) - 0.5) * (m.level >= 3 ? 1400 : 600), vy = -200 - hash(s, 2) * (m.level >= 3 ? 900 : 400);
+      const x = m.x + (hash(s, 3) - 0.5) * spread * 0.6 + vx * dt, y = m.y - 20 + vy * dt + 1400 * dt * dt;
+      if (y > T.FLOOR_Y + 120) continue;
+      const r = 3 + hash(s, 4) * 8;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(dt * (hash(s, 5) - 0.5) * 20);
+      ctx.beginPath(); ctx.moveTo(-r, -r * 0.4); ctx.lineTo(r * 0.6, -r); ctx.lineTo(r, r * 0.5); ctx.lineTo(-r * 0.3, r); ctx.closePath();
+      ctx.fillStyle = hash(s, 6) < 0.5 ? '#2a2622' : '#8e8578'; ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // 衝擊波：地面上擴散的亮環
+  function shockwave(ctx, t, m) {
+    const dt = t - m.t;
+    if (m.level < 3 || dt < 0 || dt > 0.7) return;
+    const r = 60 + dt * 1500, a = (1 - dt / 0.7) * 0.5;
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `rgba(255,230,200,${a})`; ctx.lineWidth = 18 * (1 - dt / 0.7) + 2;
+    ctx.beginPath(); ctx.ellipse(m.x, m.y, r, r * 0.28, 0, 0, 7); ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---------- 石碑 ----------
+  const FALL = 0.16;
+  function dropPose(t0, t, size) {
+    const a = t - (t0 - FALL);
+    if (a < 0) return null;
+    if (a < FALL) {
+      const p = easeIn(a / FALL);
+      return { dy: lerp(-340, 0, p), s: lerp(2.0, 1, p), alpha: clamp(a / FALL * 3), rot: lerp(-0.06, 0, p) };
+    }
+    const dt = a - FALL;
+    return { dy: -Math.sin(dt * 30) * Math.exp(-dt * 16) * 10, s: 1 + 0.02 * Math.exp(-dt * 18), alpha: 1, rot: 0 };
+  }
+  function drawTile(ctx, ch, verm, x, y, size, pose, crack, seed, dim) {
+    if (!pose || pose.alpha <= 0) return;
+    ctx.save();
+    ctx.translate(x, y + pose.dy);
+    ctx.rotate(pose.rot || 0);
+    ctx.scale(pose.s, pose.s);
+    ctx.globalAlpha *= pose.alpha;
+    // 石碑投在牆上／地上的陰影
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(-size / 2 + 10, -size / 2 + 16, size, size);
+    ctx.drawImage(tileImg(ch, verm), -size / 2, -size / 2, size, size);
+    if (crack) drawCracks(ctx, seed, size, crack);
+    if (dim) { ctx.fillStyle = `rgba(4,6,9,${dim})`; ctx.fillRect(-size / 2, -size / 2, size, size); }
+    ctx.restore();
+  }
+  function drawShards(ctx, ch, verm, x, y, size, t0, t, seed, cx0, cy0) {
+    const dt = t - t0, list = shards(seed, 9), img = tileImg(ch, verm);
+    for (const sd of list) {
+      const dirx = (x + sd.cx * size - cx0), diry = (y + sd.cy * size - cy0);
+      const l = Math.hypot(dirx, diry) || 1;
+      const sp = 500 + sd.r1 * 1100;
+      const px = x + sd.cx * size + dirx / l * sp * dt;
+      const py = y + sd.cy * size + diry / l * sp * dt * 0.7 - 300 * dt + 1500 * dt * dt;
+      const sc = 1 + dt * (0.4 + sd.r2 * 1.4);
+      const a = clamp(1 - (dt - 0.35) / 0.6);
+      if (a <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha *= a;
+      ctx.translate(px, py); ctx.rotate(dt * (sd.r3 - 0.5) * 9); ctx.scale(sc, sc);
+      ctx.beginPath();
+      sd.poly.forEach(([u, v], i) => { const X = (u - sd.cx) * size, Y = (v - sd.cy) * size; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+      ctx.closePath(); ctx.clip();
+      ctx.drawImage(img, (-0.5 - sd.cx) * size, (-0.5 - sd.cy) * size, size, size);
+      ctx.restore();
+    }
+  }
+
+  function plaque(ctx, n, t) {
+    const pose = dropPose(n.t, t, 0);
+    if (!pose || t > n.until + 0.3) return;
+    const out = t > n.until ? 1 - (t - n.until) / 0.3 : 1;
+    ctx.save();
+    ctx.translate(n.x, n.y + pose.dy); ctx.scale(pose.s, pose.s); ctx.globalAlpha *= pose.alpha * out;
+    ctx.font = `900 ${n.size}px ${SERIF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const w = ctx.measureText(n.text).width + 90, h = n.size * 1.45;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-w / 2 + 10, -h / 2 + 14, w, h);
+    const gr = ctx.createLinearGradient(0, -h / 2, 0, h / 2); gr.addColorStop(0, '#2b2e33'); gr.addColorStop(1, '#16181c');
+    ctx.fillStyle = gr; ctx.fillRect(-w / 2, -h / 2, w, h);
+    ctx.strokeStyle = 'rgba(255,240,220,0.18)'; ctx.lineWidth = 3; ctx.strokeRect(-w / 2 + 2, -h / 2 + 2, w - 4, h - 4);
+    ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillText(n.text, 3, 6);
+    ctx.fillStyle = n.verm ? C.vermHi : C.bone; ctx.fillText(n.text, 0, 2);
+    ctx.restore();
+  }
+
+  function seal(ctx, x, y, size, k) {
+    if (k <= 0) return;
+    ctx.save();
+    const s = 1 + (1 - k) * 0.6;
+    ctx.translate(x, y); ctx.rotate(-0.08); ctx.scale(s, s); ctx.globalAlpha *= k;
+    ctx.fillStyle = C.verm; ctx.fillRect(-size / 2, -size / 2, size, size);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.font = `900 ${size * 0.62}px ${SERIF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('錢', 0, size * 0.04);
+    const r = rng(9);
+    for (let i = 0; i < 70; i++) { ctx.globalAlpha = 0.3 + r() * 0.5; ctx.beginPath(); ctx.arc((r() - 0.5) * size, (r() - 0.5) * size, 0.6 + r() * 2, 0, 7); ctx.fill(); }
+    ctx.restore();
+  }
+
+  // ---------- 一個瞬間的完整畫面 ----------
+  function scene(ctx, t) {
+    const sh = shake(t);
+    const zoom = keys(t, CAM.zoom) + sh.zoom;
+    const cx = keys(t, CAM.cx), cy = keys(t, CAM.cy);
+    const rot = keys(t, CAM.rot) * Math.PI / 180 + sh.rot;
+    const camera = (par) => {
+      ctx.translate(W / 2 + sh.x * par, H / 2 + sh.y * par);
+      ctx.rotate(rot * par);
+      ctx.scale(lerp(1, zoom, par), lerp(1, zoom, par));
+      ctx.translate(-lerp(540, cx, par), -lerp(930, cy, par));
+    };
+    ctx.save(); camera(0.35); background(ctx, t); ctx.restore();
+
+    ctx.save(); camera(1);
+    const shadowA = t < T.HOOK_SHATTER ? seg(t, 0, 0.2) : 1;
+    // 牆腳陰影
+    ctx.fillStyle = `rgba(0,0,0,${0.55 * shadowA})`;
+    ctx.beginPath(); ctx.ellipse(540, T.FLOOR_Y + 8, 520, 26, 0, 0, 7); ctx.fill();
+
+    // 鉤子
+    if (t < T.HOOK_SHATTER) {
+      const cr = keys(t, [[0, 0], [T.HOOK_CRACK[0], 0], [T.HOOK_CRACK[0] + 0.05, 0.25], [T.HOOK_CRACK[1], 0.3], [T.HOOK_CRACK[1] + 0.05, 0.55], [T.HOOK_CRACK[2], 0.6], [T.HOOK_CRACK[2] + 0.05, 0.9]]);
+      const tremble = t > 1.55 ? 2.5 : 0;
+      T.HOOK.forEach((h, i) => {
+        const pose = dropPose(h.t, t, T.S);
+        if (pose && tremble) { pose.dy += Math.sin(t * 70 + i * 3) * tremble; pose.rot += Math.sin(t * 53 + i) * 0.004; }
+        drawTile(ctx, h.ch, h.verm, h.x, h.y, T.S, pose, cr, 50 + i);
+      });
+    } else if (t < T.HOOK_SHATTER + 1.2) {
+      T.HOOK.forEach((h, i) => drawShards(ctx, h.ch, h.verm, h.x, h.y, T.S, T.HOOK_SHATTER, t, 300 + i, 540, 930));
+    }
+
+    // 石牆（含互換、崩落）
+    if (t >= T.WALL[0].t - FALL && t < T.WALL_FALL + 1.0) {
+      const swapping = t >= T.SWAP.lift;
+      const mid = { x: T.COLS[0], y: (T.ROW1 + T.ROW2) / 2 }, R = (T.ROW2 - T.ROW1) / 2;
+      let theta = 0, lift = 0;
+      if (swapping) {
+        const { lift: L0, hang: H0, slam: S0 } = T.SWAP;
+        if (t < H0) { const p = seg(t, L0, H0); theta = p * 0.78 * Math.PI; lift = p; }
+        else if (t < S0 - 0.1) { const p = (t - H0) / (S0 - 0.1 - H0); theta = lerp(0.78, 0.84, p) * Math.PI; lift = 1; }
+        else if (t < S0) { const p = easeIn((t - (S0 - 0.1)) / 0.1); theta = lerp(0.84, 1, p) * Math.PI; lift = 1 - p; }
+        else { theta = Math.PI; lift = 0; }
+      }
+      const fallDt = t - T.WALL_FALL;
+      const order = WALLDRAW;
+      order.forEach(({ w, i }) => {
+        let x = w.x, y = w.y, pose = dropPose(w.t, t, T.S), dim = 0;
+        if (!pose) return;
+        if (w.id === 'you' || w.id === 'money') {
+          const sgn = w.id === 'you' ? -1 : 1;
+          x = mid.x + sgn * Math.sin(theta) * R * 1.15 + lift * 150;
+          y = mid.y + sgn * Math.cos(theta) * R;
+          pose = Object.assign({}, pose, { s: pose.s * (1 + lift * 0.28), rot: (pose.rot || 0) + Math.sin(theta) * 0.08 * sgn });
+        } else if (swapping && t < T.SWAP.slam + 0.4) {
+          dim = 0.45 * lift;
+        }
+        if (fallDt > 0) {
+          const d = fallDt - hash(i, 9) * 0.12;
+          if (d > 0) { pose = Object.assign({}, pose, { dy: pose.dy + 900 * d * d + 60 * d, rot: (hash(i, 8) - 0.5) * d * 3, alpha: pose.alpha * clamp(1 - d / 0.7) }); }
+        }
+        drawTile(ctx, w.ch, w.verm, x, y, T.S, pose, 0, 70 + i, dim);
+      });
+      // 互換落下時錢字邊緣的暗金光
+      const gd = t - T.SWAP.slam;
+      if (gd > 0 && gd < 1.2) {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = `rgba(230,179,90,${0.9 * (1 - gd / 1.2)})`; ctx.lineWidth = 8;
+        ctx.strokeRect(T.COLS[0] - T.S / 2, T.ROW1 - T.S / 2, T.S, T.S);
+        ctx.restore();
+      }
+    }
+
+    T.NUMBERS.forEach((n) => plaque(ctx, n, t));
+
+    // 最後一句
+    T.FINAL.forEach((f, i) => {
+      const pose = dropPose(f.t, t, f.size);
+      const cr = f.ch === '班' ? clamp((t - T.END_CRACK) / 0.12) : 0;
+      drawTile(ctx, f.ch, f.verm, f.x, f.y, f.size, pose, cr, 500 + i);
+    });
+    if (t >= T.STAMP - 0.1) {
+      const k = easeOut(clamp((t - T.STAMP + 0.08) / 0.08));
+      ctx.save(); ctx.globalAlpha = clamp((t - T.STAMP + 0.1) / 0.1);
+      ctx.font = `800 46px ${SANS}`; ctx.fillStyle = C.bone; ctx.textAlign = 'center';
+      ctx.fillText('@timzz1208', 500, 1350);
+      ctx.restore();
+      seal(ctx, 745, 1335, 96, k);
+    }
+
+    IMPACTS.forEach((m, i) => { shockwave(ctx, t, m); dust(ctx, t, m, i); });
+    ctx.restore();
+
+    ctx.save(); camera(1.2); motes(ctx, t); ctx.restore();
+  }
+
+  // ---------- 後製 ----------
+  function post(ctx, t) {
+    // 每拍亮度微閃
+    let pulse = 0, flash = 0, chroma = 0;
+    B.beats.forEach((b) => { const dt = t - b.t; if (dt >= 0 && dt < 0.25) pulse += Math.exp(-dt * 18) * (0.03 + 0.05 * b.strength); });
+    IMPACTS.forEach((m) => {
+      const dt = t - m.t;
+      if (dt >= 0 && dt < 0.4) {
+        if (m.level >= 3) flash += Math.exp(-dt * 22) * 0.85;
+        else if (m.level >= 2) pulse += Math.exp(-dt * 16) * 0.08;
+        if (m.level >= 2 && dt < 0.07) chroma = Math.max(chroma, m.level >= 3 ? 10 : 5);
+      }
+    });
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    if (pulse > 0) { ctx.fillStyle = `rgba(255,236,214,${clamp(pulse, 0, 0.35)})`; ctx.fillRect(0, 0, W, H); }
+    if (flash > 0) { ctx.fillStyle = `rgba(255,248,238,${clamp(flash)})`; ctx.fillRect(0, 0, W, H); }
+    ctx.restore();
+    if (chroma) {
+      const img = ctx.getImageData(0, 0, W, H), d = img.data, src = new Uint8ClampedArray(d);
+      const k = Math.round(chroma);
+      for (let y = 0; y < H; y++) {
+        const row = y * W * 4;
+        for (let x = 0; x < W; x++) {
+          const i = row + x * 4;
+          const xr = Math.min(W - 1, x + k), xb = Math.max(0, x - k);
+          d[i] = src[row + xr * 4]; d[i + 2] = src[row + xb * 4 + 2];
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+    // 暗角
+    const v = ctx.createRadialGradient(W / 2, H * 0.47, W * 0.35, W / 2, H / 2, H * 0.72);
+    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.72)');
+    ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+    // 顆粒（每秒跳 12 次）
+    if (!grainTiles) grainTiles = [buildGrain(1), buildGrain(2), buildGrain(3)];
+    ctx.save(); ctx.imageSmoothingEnabled = false; ctx.drawImage(grainTiles[Math.floor(t * 12) % 3], 0, 0, W, H); ctx.restore();
+    // 小字聲明
+    ctx.save(); ctx.font = `500 24px ${SANS}`; ctx.fillStyle = 'rgba(233,226,211,0.55)'; ctx.textAlign = 'center';
+    ctx.fillText('財商觀念分享，非投資建議', W / 2, 1600); ctx.restore();
+  }
+
+  const WALLDRAW = T.WALL.map((w, i) => ({ w, i })).sort((a, b) => (a.w.id ? 1 : 0) - (b.w.id ? 1 : 0));
+
+  // ---------- 輸出 ----------
+  const stage = document.getElementById('stage');
+  stage.width = W * OUT_SCALE; stage.height = H * OUT_SCALE;
+  const out = stage.getContext('2d');
+  const acc = mk(W, H), accCtx = acc.getContext('2d');
+  const sub = mk(W, H), subCtx = sub.getContext('2d');
+
+  function renderAt(t) {
+    for (let i = 0; i < MB; i++) {
+      const ts = MB > 1 ? t + ((i + 0.5) / MB - 0.5) * SHUTTER : t;
+      subCtx.setTransform(1, 0, 0, 1, 0, 0);
+      scene(subCtx, ts);
+      accCtx.globalAlpha = 1 / (i + 1);
+      accCtx.drawImage(sub, 0, 0);
+    }
+    accCtx.globalAlpha = 1;
+    post(accCtx, t);
+    out.setTransform(1, 0, 0, 1, 0, 0);
+    out.drawImage(acc, 0, 0, stage.width, stage.height);
+  }
+
+  const TILE_LIST = [...new Map([...T.HOOK, ...T.WALL, ...T.FINAL].map((x) => [tileKey(x.ch, !!x.verm), [x.ch, !!x.verm]])).values()];
+  window.renderAt = renderAt;
+  window.DURATION = T.DURATION;
+  window.ready = loadTileImages(TILE_LIST).then(() => (document.fonts ? document.fonts.ready : null)).then(() => true);
+
+  if (q.has('render')) { document.body.classList.add('render'); return; }
+  const playBtn = document.getElementById('play'), scrub = document.getElementById('scrub'), tout = document.getElementById('time');
+  let t = 0, playing = true, last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (playing) { t += dt; if (t >= T.DURATION) t = 0; }
+    renderAt(t); scrub.value = t.toFixed(2); tout.textContent = t.toFixed(1) + ' 秒'; playBtn.textContent = playing ? '暫停' : '播放';
+    requestAnimationFrame(loop);
+  }
+  playBtn.addEventListener('click', () => { playing = !playing; });
+  scrub.addEventListener('input', () => { t = +scrub.value; playing = false; });
+  window.ready.then(() => requestAnimationFrame(loop));
+})();
+</script>
+</body>
+</html>
